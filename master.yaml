@@ -1,0 +1,75 @@
+networks:
+  postgres-cluster:
+    driver: bridge
+
+volumes:
+  postgres-master-data:
+  postgres-replica-data:
+
+services:
+  postgres-master:
+    image: postgres:16
+    container_name: postgres-master
+    hostname: postgres-master
+    environment:
+      POSTGRES_DB: mydb
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      POSTGRES_REPLICATION_USER: replicauser
+      POSTGRES_REPLICATION_PASSWORD: replicauser123
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf -c hba_file=/etc/postgresql/pg_hba.conf
+    volumes:
+      - postgres-master-data:/var/lib/postgresql/data
+      - ./master-configuration/init-master.sh:/docker-entrypoint-initdb.d/init-master.sh
+      - ./master-configuration/postgresql.conf:/etc/postgresql/postgresql.conf
+      - ./master-configuration/pg_hba.conf:/etc/postgresql/pg_hba.conf
+    ports:
+      - "5433:5433"
+    networks:
+      - postgres-cluster
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  postgres-replica:
+    image: postgres:16
+    container_name: postgres-replica
+    hostname: postgres-replica
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      PGUSER: postgres
+      POSTGRES_MASTER_SERVICE: postgres-master
+      POSTGRES_REPLICATION_USER: replicauser
+      POSTGRES_REPLICATION_PASSWORD: replicauser123
+      # Don't auto-initialize with initdb since we're doing basebackup
+      POSTGRES_HOST_AUTH_METHOD: trust
+    volumes:
+      - postgres-replica-data:/var/lib/postgresql/data
+      - ./replica-configuration/init-replica.sh:/docker-entrypoint-initdb.d/init-replica.sh
+      - ./replica-configuration/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - postgres-cluster
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    # Use a more flexible startup command
+    entrypoint: |
+      bash -c "
+        # Run initialization script
+        if [ -f /docker-entrypoint-initdb.d/init-replica.sh ]; then
+          chmod +x /docker-entrypoint-initdb.d/init-replica.sh
+          /docker-entrypoint-initdb.d/init-replica.sh
+        fi
+        # Start PostgreSQL
+        exec postgres -c config_file=/etc/postgresql/postgresql.conf
+      "
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
