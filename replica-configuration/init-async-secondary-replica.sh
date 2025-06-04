@@ -35,7 +35,7 @@ chmod 700 /var/lib/postgresql/data
 # Update recovery settings
 cat >> /var/lib/postgresql/data/postgresql.auto.conf <<EOF
 primary_conninfo = 'host=postgres-master port=5433 user=replicauser password=replicauser123'
-primary_slot_name = 'replica_slot'
+primary_slot_name = 'async_replica_slot2'
 hot_standby = on
 EOF
 
