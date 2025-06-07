@@ -5,7 +5,7 @@ networks:
 volumes:
   postgres-master-data:
   postgres-async-replica-data:
-  postgres-async-replica-secondary-data:
+  postgres-sync-replica-data:
 
 services:
   postgres-master:
@@ -34,6 +34,39 @@ services:
       timeout: 5s
       retries: 5
 
+  postgres-sync-replica:
+    image: postgres:16
+    container_name: postgres-sync-replica
+    hostname: postgres-sync-replica
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: password123
+      PGUSER: postgres
+      POSTGRES_MASTER_SERVICE: postgres-master
+      POSTGRES_REPLICATION_USER: replicauser
+      POSTGRES_REPLICATION_PASSWORD: replicauser123
+      POSTGRES_HOST_AUTH_METHOD: trust
+      REPLICA_TYPE: sync
+    volumes:
+      - postgres-sync-replica-data:/var/lib/postgresql/data
+      - ./replica-configuration/init-replica-mixed.sh:/tmp/init-replica.sh:ro
+      - ./replica-configuration/postgresql-sync.conf:/etc/postgresql/postgresql.conf:ro
+      - ./replica-configuration/unified-replica.sh:/tmp/entrypoint.sh:ro
+    ports:
+      - "5432:5432"
+    networks:
+      - postgres-cluster
+    depends_on:
+      postgres-master:
+        condition: service_healthy
+    entrypoint: ["bash", "/tmp/entrypoint.sh"]
+    healthcheck:
+      test: ["CMD", "true"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
   postgres-async-replica:
     image: postgres:16
     container_name: postgres-async-replica
@@ -45,54 +78,13 @@ services:
       POSTGRES_MASTER_SERVICE: postgres-master
       POSTGRES_REPLICATION_USER: replicauser
       POSTGRES_REPLICATION_PASSWORD: replicauser123
-      # Don't auto-initialize with initdb since we're doing basebackup
       POSTGRES_HOST_AUTH_METHOD: trust
+      REPLICA_TYPE: async
     volumes:
       - postgres-async-replica-data:/var/lib/postgresql/data
-      - ./replica-configuration/init-async-replica.sh:/docker-entrypoint-initdb.d/init-async-replica.sh
-      - ./replica-configuration/init-async-postgresql.conf:/etc/postgresql/postgresql.conf:ro
-    ports:
-      - "5432:5432"
-    networks:
-      - postgres-cluster
-    depends_on:
-      postgres-master:
-        condition: service_healthy
-    # Use a more flexible startup command
-    entrypoint: |
-      bash -c "
-        # Run initialization script
-        if [ -f /docker-entrypoint-initdb.d/init-async-replica.sh ]; then
-          chmod +x /docker-entrypoint-initdb.d/init-async-replica.sh
-          /docker-entrypoint-initdb.d/init-async-replica.sh
-        fi
-        # Start PostgreSQL
-        exec postgres -c config_file=/etc/postgresql/postgresql.conf
-      "
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -p 5432"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-
-  postgres-async-replica-secondary:
-    image: postgres:16
-    container_name: postgres-async-replica-secondary
-    hostname: postgres-async-replica-secondary
-    environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: password123
-      PGUSER: postgres
-      POSTGRES_MASTER_SERVICE: postgres-master
-      POSTGRES_REPLICATION_USER: replicauser
-      POSTGRES_REPLICATION_PASSWORD: replicauser123
-      # Don't auto-initialize with initdb since we're doing basebackup
-      POSTGRES_HOST_AUTH_METHOD: trust
-    volumes:
-      - postgres-async-replica-secondary-data:/var/lib/postgresql/data
-      - ./replica-configuration/init-async-secondary-replica.sh:/docker-entrypoint-initdb.d/init-async-replica.sh
-      - ./replica-configuration/init-async-secondary-postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./replica-configuration/init-replica-mixed.sh:/tmp/init-replica.sh:ro
+      - ./replica-configuration/async-replica-postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./replica-configuration/unified-replica.sh:/tmp/entrypoint.sh:ro
     ports:
       - "5434:5432"
     networks:
@@ -100,19 +92,10 @@ services:
     depends_on:
       postgres-master:
         condition: service_healthy
-    # Use a more flexible startup command
-    entrypoint: |
-      bash -c "
-        # Run initialization script
-        if [ -f /docker-entrypoint-initdb.d/init-async-replica.sh ]; then
-          chmod +x /docker-entrypoint-initdb.d/init-async-replica.sh
-          /docker-entrypoint-initdb.d/init-async-replica.sh
-        fi
-        # Start PostgreSQL
-        exec postgres -c config_file=/etc/postgresql/postgresql.conf
-      "
+    entrypoint: ["bash", "/tmp/entrypoint.sh"]
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -p 5432"]
+      test: ["CMD", "true"]
       interval: 10s
       timeout: 5s
       retries: 5
+      start_period: 30s
