@@ -12,6 +12,6 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-E
     SELECT * FROM pg_create_physical_replication_slot('async_replica_slot2');
 EOSQL
 
-#echo "synchronous_standby_names = '1 (postgres_sync_replica)'" >> /var/lib/postgresql/data/postgresql.auto.conf
-
+echo "synchronous_standby_names = '1 (postgres_sync_replica)'" >> /var/lib/postgresql/data/postgresql.auto.conf
+echo "synchronous_commit = on" >> /var/lib/postgresql/data/postgresql.auto.conf
 echo "Master database initialized with replication user"
