@@ -25,7 +25,7 @@ services:
       - ./master-configuration/postgresql.conf:/etc/postgresql/postgresql.conf
       - ./master-configuration/pg_hba.conf:/etc/postgresql/pg_hba.conf
     ports:
-      - "5433:5432"
+      - "5432:5432"
     networks:
       - postgres-cluster
     healthcheck:
@@ -53,7 +53,7 @@ services:
       - ./replica-configuration/postgresql-sync.conf:/etc/postgresql/postgresql.conf:ro
       - ./replica-configuration/unified-replica.sh:/tmp/entrypoint.sh:ro
     ports:
-      - "5432:5432"
+      - "5433:5432"
     networks:
       - postgres-cluster
     depends_on:
