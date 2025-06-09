@@ -5,7 +5,7 @@ echo "Setting up PostgreSQL replica..."
 echo "Replica type: ${REPLICA_TYPE:-async}"
 
 # Wait for master
-until pg_isready -h postgres-master -p 5433; do
+until pg_isready -h postgres-master -p 5432; do
   echo "Waiting for master..."
   sleep 2
 done
@@ -55,7 +55,7 @@ mkdir -p "$TEMP_DATA_DIR"
 echo "Creating base backup in temporary directory..."
 PGPASSWORD=replicauser123 pg_basebackup \
   -h postgres-master \
-  -p 5433 \
+  -p 5432 \
   -U replicauser \
   -D "$TEMP_DATA_DIR" \
   -P -W -R -X stream \
@@ -84,7 +84,7 @@ fi
 
 # Update recovery settings with unique slot name and application name
 cat >> /var/lib/postgresql/data/postgresql.auto.conf <<EOF
-primary_conninfo = 'host=postgres-master port=5433 user=replicauser password=replicauser123 application_name=$APP_NAME'
+primary_conninfo = 'host=postgres-master port=5432 user=replicauser password=replicauser123 application_name=$APP_NAME'
 primary_slot_name = '$REPLICA_SLOT_NAME'
 hot_standby = on
 EOF
@@ -123,7 +123,7 @@ else
   echo "Creating base backup in temporary directory..."
   PGPASSWORD=replicauser123 pg_basebackup \
     -h postgres-master \
-    -p 5433 \
+    -p 5432 \
     -U replicauser \
     -D "$TEMP_DATA_DIR" \
     -P -W -R -X stream \
@@ -152,7 +152,7 @@ else
 
   # Update recovery settings with unique slot name and application name
   cat >> /var/lib/postgresql/data/postgresql.auto.conf <<EOF
-primary_conninfo = 'host=postgres-master port=5433 user=replicauser password=replicauser123 application_name=$APP_NAME'
+primary_conninfo = 'host=postgres-master port=5432 user=replicauser password=replicauser123 application_name=$APP_NAME'
 primary_slot_name = '$REPLICA_SLOT_NAME'
 hot_standby = on
 EOF
