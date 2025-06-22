@@ -1,6 +1,16 @@
 <h1 align="center">Mirror-DB</h1>
 <hr>
 
+### To connect with the postgres outside the cluster
+
+```bash
+minikube service postgres-external -n db --url
+```
+```bash
+kubectl port-forward -n db svc/postgres-external 5432:5432
+```
+
+
 # 2-Week Kubernetes & PostgreSQL HA Learning Plan
 
 ## Week 1: Kubernetes Fundamentals + Basic PostgreSQL Concepts
