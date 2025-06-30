@@ -1,0 +1,17 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-monitor
+  namespace: db
+  labels:
+    app: postgres-monitor
+spec:
+  selector:
+    app: postgres-monitor
+  ports:
+    - name: postgres
+      port: 5432
+      targetPort: 5432
+      protocol: TCP
+  clusterIP: None  # Headless for stable DNS name
+  type: ClusterIP
