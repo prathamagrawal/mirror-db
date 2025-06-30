@@ -1,0 +1,119 @@
+# ConfigMap for pg_auto_failover specific settings
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pg-auto-failover-config
+  namespace: db
+data:
+  # Formation and group settings
+  formation-settings.conf: |
+    # pg_auto_failover formation configuration
+    # Formation name - logical grouping of nodes
+    PG_AUTOCTL_FORMATION=default
+
+    # Monitor URI - will be set dynamically
+    PG_AUTOCTL_MONITOR=postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover
+
+    # Node settings
+    PG_AUTOCTL_NODE_PASSWORD_FILE=/etc/secrets/postgres-password
+    PG_AUTOCTL_REPLICATION_PASSWORD_FILE=/etc/secrets/replicator-password
+
+    # SSL settings
+    PG_AUTOCTL_SSL_SELF_SIGNED=true
+    PG_AUTOCTL_SSL_MODE=require
+
+    # Failover settings
+    PG_AUTOCTL_CANDIDATE_PRIORITY=50    # Default priority for failover candidates
+    PG_AUTOCTL_REPLICATION_QUORUM=true  # Enable synchronous replication quorum
+
+  # Node-specific environment variables
+  node-env.conf: |
+    # Timeout settings
+    PG_AUTOCTL_NODE_TIMEOUT=30
+    PG_AUTOCTL_FORMATION_TIMEOUT=60
+
+    # Health check settings
+    PG_AUTOCTL_HEALTH_CHECK_MAX_RETRIES=3
+    PG_AUTOCTL_HEALTH_CHECK_RETRY_DELAY=2
+
+    # Replication settings
+    PG_AUTOCTL_SYNCHRONOUS_STANDBY_NAMES_POLICY=first
+
+  # Initialization script for nodes
+  init-node.sh: |
+    #!/bin/bash
+    set -e
+
+    NODE_NAME=$(hostname)
+    NODE_ROLE=""
+
+    # Determine node role based on hostname
+    case $NODE_NAME in
+      *-0)
+        NODE_ROLE="master"
+        PRIORITY=100
+        ;;
+      *-1)
+        NODE_ROLE="sync-replica"
+        PRIORITY=90
+        ;;
+      *-2|*-3)
+        NODE_ROLE="async-replica"
+        PRIORITY=80
+        ;;
+      *)
+        NODE_ROLE="async-replica"
+        PRIORITY=70
+        ;;
+    esac
+
+    echo "Initializing node $NODE_NAME as $NODE_ROLE with priority $PRIORITY"
+
+    # Export environment variables
+    export PGDATA=/var/lib/postgresql/data
+    export PGPORT=5432
+    export PGUSER=postgres
+    export PGPASSWORD=$(cat /etc/secrets/postgres-password)
+
+    # Wait for monitor to be available
+    echo "Waiting for monitor to be ready..."
+    until pg_isready -h postgres-monitor.db.svc.cluster.local -p 5432 -U autoctl_node; do
+      echo "Monitor not ready, waiting..."
+      sleep 5
+    done
+
+    # Initialize pg_auto_failover node
+    if [ ! -f "$PGDATA/PG_VERSION" ]; then
+      echo "Creating pg_auto_failover node with role: $NODE_ROLE"
+
+      pg_autoctl create postgres \
+        --monitor postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover \
+        --auth trust \
+        --ssl-self-signed \
+        --pgdata $PGDATA \
+        --pgport $PGPORT \
+        --listen 0.0.0.0 \
+        --hostname ${NODE_NAME}.postgres-nodes.db.svc.cluster.local \
+        --name $NODE_NAME \
+        --candidate-priority $PRIORITY
+
+      # Configure users and passwords
+      pg_ctl -D $PGDATA -l /tmp/pg.log start
+      sleep 5
+
+      # Set up users
+      psql -d postgres -c "ALTER USER postgres PASSWORD '$(cat /etc/secrets/postgres-password)';"
+      psql -d postgres -c "CREATE USER IF NOT EXISTS replicator REPLICATION LOGIN PASSWORD '$(cat /etc/secrets/replicator-password)';"
+      psql -d postgres -c "CREATE USER IF NOT EXISTS appuser LOGIN PASSWORD '$(cat /etc/secrets/app-password)';"
+      psql -d postgres -c "CREATE DATABASE IF NOT EXISTS mydb OWNER appuser;"
+
+      pg_ctl -D $PGDATA stop
+
+      # Copy configuration files
+      cp /etc/config/postgresql.conf $PGDATA/
+      cp /etc/config/pg_hba.conf $PGDATA/
+
+      echo "Node initialization completed"
+    else
+      echo "Node already initialized"
+    fi

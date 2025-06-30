@@ -1,0 +1,63 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: postgres-monitor-config
+  namespace: db
+data:
+  postgresql.conf: |
+    # PostgreSQL configuration for pg_auto_failover monitor
+    listen_addresses = '*'
+    port = 5432
+
+    # Connection settings
+    max_connections = 100
+    superuser_reserved_connections = 3
+
+    # Memory settings (adjust based on monitor node resources)
+    shared_buffers = 128MB
+    effective_cache_size = 512MB
+    work_mem = 4MB
+    maintenance_work_mem = 64MB
+
+    # WAL settings (minimal for monitor)
+    wal_level = replica
+    wal_buffers = 16MB
+    checkpoint_completion_target = 0.9
+
+    # Logging configuration
+    log_destination = 'stderr'
+    logging_collector = off
+    log_min_messages = info
+    log_line_prefix = '%t [%p] %u@%d from %h: '
+    log_checkpoints = on
+    log_connections = on
+    log_disconnections = on
+    log_statement = 'mod'
+
+    # Auto vacuum settings
+    autovacuum = on
+    autovacuum_max_workers = 2
+
+  pg_hba.conf: |
+    # TYPE  DATABASE        USER            ADDRESS                 METHOD
+    # Local connections
+    local   all             all                                     trust
+    local   replication     all                                     trust
+
+    # IPv4 local connections
+    host    all             all             127.0.0.1/32            trust
+    host    replication     all             127.0.0.1/32            trust
+
+    # IPv6 local connections
+    host    all             all             ::1/128                 trust
+    host    replication     all             ::1/128                 trust
+
+    # Kubernetes cluster internal network (adjust CIDR as needed)
+    host    all             postgres        10.0.0.0/8              md5
+    host    all             autoctl_node    10.0.0.0/8              trust
+    host    all             autoctl_node    0.0.0.0/0               trust
+
+    # Allow monitor connections from anywhere in cluster
+    host    pg_auto_failover autoctl_node   0.0.0.0/0               trust
+
+---

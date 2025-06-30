@@ -1,0 +1,142 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-monitor
+  namespace: db
+  labels:
+    app: postgres-monitor
+    role: monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-monitor
+  template:
+    metadata:
+      labels:
+        app: postgres-monitor
+        role: monitor
+    spec:
+      securityContext:
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+      containers:
+        - name: postgres-monitor
+          image: citusdata/pg_auto_failover:latest
+          command:
+            - /bin/bash
+            - -c
+            - |
+              # Initialize PostgreSQL data directory if it doesn't exist
+              if [ ! -f "$PGDATA/PG_VERSION" ]; then
+                echo "Initializing PostgreSQL data directory..."
+                initdb -D "$PGDATA" -U postgres --auth-local=trust --auth-host=md5
+
+                # Copy configuration files from the mounted ConfigMap
+                echo "Copying PostgreSQL configuration files..."
+                cp /etc/config/postgresql.conf "$PGDATA/"
+                cp /etc/config/pg_hba.conf "$PGDATA/"
+
+                # Set proper ownership
+                chown postgres:postgres "$PGDATA"/*.conf
+              fi
+
+              # Start PostgreSQL
+              echo "Starting PostgreSQL..."
+              postgres -D "$PGDATA" &
+              PG_PID=$!
+
+              # Wait for PostgreSQL to be ready
+              echo "Waiting for PostgreSQL to start..."
+              until pg_isready -U postgres -d postgres; do
+                echo "PostgreSQL not ready yet, waiting..."
+                sleep 2
+              done
+
+              # Set up users and passwords from secrets
+              echo "Setting up PostgreSQL users..."
+              POSTGRES_PASSWORD=$(cat /etc/secrets/postgres-password)
+              MONITOR_PASSWORD=$(cat /etc/secrets/monitor-password)
+
+              # Set postgres user password
+              psql -U postgres -d postgres -c "ALTER USER postgres PASSWORD '$POSTGRES_PASSWORD';"
+
+              # Create the pg_auto_failover database and extension
+              echo "Setting up pg_auto_failover database..."
+              psql -U postgres -d postgres -c "CREATE DATABASE pg_auto_failover;" || true
+              psql -U postgres -d pg_auto_failover -c "CREATE EXTENSION pgautofailover;" || true
+
+              # Create monitor user with password from secret
+              psql -U postgres -d pg_auto_failover -c "CREATE USER autoctl_node WITH PASSWORD '$MONITOR_PASSWORD';" || true
+              psql -U postgres -d pg_auto_failover -c "GRANT ALL PRIVILEGES ON DATABASE pg_auto_failover TO autoctl_node;" || true
+
+              echo "Monitor setup completed successfully"
+              echo "Monitor URI: postgres://autoctl_node@$(hostname).postgres-monitor.postgres-ha.svc.cluster.local:5432/pg_auto_failover"
+
+              # Keep PostgreSQL running
+              wait $PG_PID
+          ports:
+            - containerPort: 5432
+              name: postgres
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/data
+            - name: PGUSER
+              value: postgres
+            - name: POSTGRES_DB
+              value: pg_auto_failover
+          volumeMounts:
+            - name: postgres-monitor-storage
+              mountPath: /var/lib/postgresql/data
+              subPath: pgdata
+            - name: postgres-monitor-config
+              mountPath: /etc/config
+              readOnly: true
+            - name: postgres-secrets
+              mountPath: /etc/secrets
+              readOnly: true
+          resources:
+            requests:
+              memory: "256Mi"
+              cpu: "100m"
+            limits:
+              memory: "512Mi"
+              cpu: "500m"
+#          livenessProbe:
+#            exec:
+#              command:
+#                - pg_isready
+#                - -U
+#                - postgres
+#                - -d
+#                - pg_auto_failover
+#            initialDelaySeconds: 30
+#            periodSeconds: 10
+#            timeoutSeconds: 5
+#            failureThreshold: 3
+#          readinessProbe:
+#            exec:
+#              command:
+#                - pg_isready
+#                - -U
+#                - postgres
+#                - -d
+#                - pg_auto_failover
+#            initialDelaySeconds: 10
+#            periodSeconds: 5
+#            timeoutSeconds: 3
+#            failureThreshold: 3
+      volumes:
+        - name: postgres-monitor-storage
+          persistentVolumeClaim:
+            claimName: postgres-monitor-pvc
+        - name: postgres-monitor-config
+          configMap:
+            name: postgres-monitor-config
+            defaultMode: 0644
+        - name: postgres-secrets
+          secret:
+            secretName: postgres-creds
+            defaultMode: 0600
+      restartPolicy: Always
