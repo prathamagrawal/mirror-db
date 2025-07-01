@@ -10,6 +10,7 @@ minikube service postgres-external -n db --url
 kubectl port-forward -n db svc/postgres-external 5432:5432
 ```
 
+Monitor URI: postgres://autoctl_node@postgres-monitor-7dcdb49b99-sbssg.postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover
 
 # 2-Week Kubernetes & PostgreSQL HA Learning Plan
 
