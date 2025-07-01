@@ -86,7 +86,7 @@ spec:
               # Create the pg_auto_failover database and extension
               echo "Setting up pg_auto_failover database..."
               psql -U postgres -d postgres -c "CREATE DATABASE pg_auto_failover;" || true
-              psql -U postgres -d pg_auto_failover -c "CREATE EXTENSION pgautofailover;" || true
+              psql -U postgres -d pg_auto_failover -c "CREATE EXTENSION pgautofailover cascade;" || true
 
               # Create monitor user with password from secret
               psql -U postgres -d pg_auto_failover -c "CREATE USER autoctl_node WITH PASSWORD '$MONITOR_PASSWORD';" || true

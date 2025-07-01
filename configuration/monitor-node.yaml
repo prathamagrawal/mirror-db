@@ -38,6 +38,9 @@ data:
     autovacuum = on
     autovacuum_max_workers = 2
 
+    shared_preload_libraries = 'pg_stat_statements,pgautofailover'
+
+
   pg_hba.conf: |
     # TYPE  DATABASE        USER            ADDRESS                 METHOD
     # Local connections
