@@ -18,9 +18,28 @@ spec:
         role: monitor
     spec:
       securityContext:
-        runAsUser: 1000
-        runAsGroup: 1000
-        fsGroup: 1000
+        fsGroup: 101 
+        runAsUser: 101
+        runAsGroup: 101
+      initContainers:
+        - name: setup-user
+          image: citusdata/pg_auto_failover:latest
+          command: ["/bin/bash"]
+          args:
+            - -c
+            - |
+              # Ensure postgres user exists in /etc/passwd
+              if ! getent passwd postgres > /dev/null 2>&1; then
+                echo "postgres:x:102:102:PostgreSQL Server:/var/lib/postgresql:/bin/bash" >> /etc/passwd
+              fi
+              # Create home directory
+              mkdir -p /var/lib/postgresql
+              chown 102:102 /var/lib/postgresql
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: postgres-monitor-storage
+              mountPath: /var/lib/postgresql/pgdata
       containers:
         - name: postgres-monitor
           image: citusdata/pg_auto_failover:latest
@@ -28,6 +47,10 @@ spec:
             - /bin/bash
             - -c
             - |
+              # Set up PostgreSQL data directory in a writable location
+              mkdir -p /var/lib/postgresql/pgdata
+              export PGDATA=/var/lib/postgresql/pgdata
+              
               # Initialize PostgreSQL data directory if it doesn't exist
               if [ ! -f "$PGDATA/PG_VERSION" ]; then
                 echo "Initializing PostgreSQL data directory..."
@@ -37,9 +60,6 @@ spec:
                 echo "Copying PostgreSQL configuration files..."
                 cp /etc/config/postgresql.conf "$PGDATA/"
                 cp /etc/config/pg_hba.conf "$PGDATA/"
-
-                # Set proper ownership
-                chown postgres:postgres "$PGDATA"/*.conf
               fi
 
               # Start PostgreSQL
@@ -61,6 +81,7 @@ spec:
 
               # Set postgres user password
               psql -U postgres -d postgres -c "ALTER USER postgres PASSWORD '$POSTGRES_PASSWORD';"
+              echo "Postgres main server and password completed !!"
 
               # Create the pg_auto_failover database and extension
               echo "Setting up pg_auto_failover database..."
@@ -72,16 +93,21 @@ spec:
               psql -U postgres -d pg_auto_failover -c "GRANT ALL PRIVILEGES ON DATABASE pg_auto_failover TO autoctl_node;" || true
 
               echo "Monitor setup completed successfully"
-              echo "Monitor URI: postgres://autoctl_node@$(hostname).postgres-monitor.postgres-ha.svc.cluster.local:5432/pg_auto_failover"
+              echo "Monitor URI: postgres://autoctl_node@$(hostname).postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover"
 
               # Keep PostgreSQL running
               wait $PG_PID
+
           ports:
             - containerPort: 5432
               name: postgres
+          securityContext:
+            runAsUser: 101
+            runAsGroup: 101
+
           env:
             - name: PGDATA
-              value: /var/lib/postgresql/data
+              value: /var/lib/postgresql/pgdata
             - name: PGUSER
               value: postgres
             - name: POSTGRES_DB
