@@ -70,7 +70,7 @@ data:
     echo "Initializing node $NODE_NAME as $NODE_ROLE with priority $PRIORITY"
 
     # Export environment variables
-    export PGDATA=/var/lib/postgresql/data
+    export PGDATA=/var/lib/postgresql/pgdata
     export PGPORT=5432
     export PGUSER=postgres
     export PGPASSWORD=$(cat /etc/secrets/postgres-password)

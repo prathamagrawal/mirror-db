@@ -24,7 +24,7 @@ spec:
         command: ["/bin/bash", "/etc/scripts/init-node.sh"]
         env:
         - name: PGDATA
-          value: /var/lib/postgresql/data
+          value: /var/lib/postgresql/pgdata
         - name: PGPORT
           value: "5432"
         - name: PGUSER
@@ -33,7 +33,7 @@ spec:
           value: postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover
         volumeMounts:
         - name: postgres-data
-          mountPath: /var/lib/postgresql/data
+          mountPath: /var/lib/postgresql/pgdata
         - name: postgres-node-config
           mountPath: /etc/config
           readOnly: true
@@ -51,7 +51,7 @@ spec:
           name: postgres
         env:
         - name: PGDATA
-          value: /var/lib/postgresql/data
+          value: /var/lib/postgresql/pgdata
         - name: PGPORT
           value: "5432"
         - name: PGUSER
@@ -78,7 +78,7 @@ spec:
           wait
         volumeMounts:
         - name: postgres-data
-          mountPath: /var/lib/postgresql/data
+          mountPath: /var/lib/postgresql/pgdata
         - name: postgres-node-config
           mountPath: /etc/postgresql
           readOnly: true
@@ -134,10 +134,10 @@ spec:
           # Monitor and manage pg_auto_failover state
           while true; do
             # Check node status
-            pg_autoctl show state --pgdata /var/lib/postgresql/data || true
+            pg_autoctl show state --pgdata /var/lib/postgresql/pgdata || true
 
             # Update service labels based on role
-            NODE_STATE=$(pg_autoctl show state --pgdata /var/lib/postgresql/data --json 2>/dev/null | jq -r '.nodes[0].current_role // "unknown"')
+            NODE_STATE=$(pg_autoctl show state --pgdata /var/lib/postgresql/pgdata --json 2>/dev/null | jq -r '.nodes[0].current_role // "unknown"')
 
             if [ "$NODE_STATE" = "primary" ]; then
               # This is a primary node
@@ -151,10 +151,10 @@ spec:
           done
         env:
         - name: PGDATA
-          value: /var/lib/postgresql/data
+          value: /var/lib/postgresql/pgdata
         volumeMounts:
         - name: postgres-data
-          mountPath: /var/lib/postgresql/data
+          mountPath: /var/lib/postgresql/pgdata
         - name: postgres-secrets
           mountPath: /etc/secrets
           readOnly: true
