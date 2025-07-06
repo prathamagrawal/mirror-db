@@ -18,6 +18,10 @@ spec:
         app: postgres-nodes
         role: data
     spec:
+      securityContext:
+        fsGroup: 101
+        runAsUser: 101
+        runAsGroup: 101
       initContainers:
       - name: pg-auto-failover-init
         image: citusdata/pg_auto_failover:latest
@@ -134,10 +138,10 @@ spec:
           # Monitor and manage pg_auto_failover state
           while true; do
             # Check node status
-            pg_autoctl show state --pgdata /var/lib/postgresql/pgdata || true
+            pg_autoctl show state --pgdata /var/lib/postgresql/pg data || true
 
             # Update service labels based on role
-            NODE_STATE=$(pg_autoctl show state --pgdata /var/lib/postgresql/pgdata --json 2>/dev/null | jq -r '.nodes[0].current_role // "unknown"')
+            NODE_STATE=$(pg_autoctl show state --pgdata /var/lib/postgresql/data --json 2>/dev/null | jq -r '.nodes[0].current_role // "unknown"')
 
             if [ "$NODE_STATE" = "primary" ]; then
               # This is a primary node
@@ -151,7 +155,7 @@ spec:
           done
         env:
         - name: PGDATA
-          value: /var/lib/postgresql/pgdata
+          value: /var/lib/postgresql/data
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql/pgdata
