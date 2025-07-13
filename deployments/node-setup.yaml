@@ -23,9 +23,32 @@ spec:
         runAsUser: 101
         runAsGroup: 101
       initContainers:
+      - name: fix-perms
+        image: busybox
+        command: ["sh", "-c", "chown -R 101:101 /var/lib/postgresql/pgdata"]
+        securityContext:
+          runAsUser: 0
+        volumeMounts:
+          - name: postgres-data
+            mountPath: /var/lib/postgresql/pgdata
+
       - name: pg-auto-failover-init
         image: citusdata/pg_auto_failover:latest
         command: ["/bin/bash", "/etc/scripts/init-node.sh"]
+        args:
+          - -c
+          - |
+              # Ensure postgres user exists in /etc/passwd
+              if ! getent passwd postgres > /dev/null 2>&1; then
+                echo "postgres:x:102:102:PostgreSQL Server:/var/lib/postgresql:/bin/bash" >> /etc/passwd
+              fi
+              # Create home directory
+              mkdir -p /var/lib/postgresql
+              chown 102:102 /var/lib/postgresql
+
+        securityContext:
+          runAsGroup: 101
+          runAsUser: 101
         env:
         - name: PGDATA
           value: /var/lib/postgresql/pgdata
@@ -75,16 +98,23 @@ spec:
         - /bin/bash
         - -c
         - |
-          # Start pg_auto_failover in background
-          pg_autoctl run --pgdata $PGDATA &
+          set -e
 
-          # Keep container running
-          wait
+          # Ensure pg_autoctl.cfg exists
+          if [ ! -f "$PGDATA/pg_autoctl.cfg" ]; then
+            echo "ERROR: pg_autoctl.cfg not found! Init container may have failed."
+            exit 1
+          fi
+
+          echo "Starting pg_auto_failover..."
+
+          # Start pg_auto_failover
+          exec pg_autoctl run --pgdata $PGDATA
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql/pgdata
         - name: postgres-node-config
-          mountPath: /etc/postgresql
+          mountPath: /etc/config
           readOnly: true
         - name: postgres-secrets
           mountPath: /etc/secrets
@@ -99,26 +129,6 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1000m"
-        livenessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - pg_isready -U postgres
-          initialDelaySeconds: 60
-          periodSeconds: 10
-          timeoutSeconds: 5
-          failureThreshold: 3
-        readinessProbe:
-          exec:
-            command:
-            - /bin/sh
-            - -c
-            - pg_isready -U postgres
-          initialDelaySeconds: 30
-          periodSeconds: 5
-          timeoutSeconds: 5
-          failureThreshold: 3
         lifecycle:
           preStop:
             exec:
@@ -128,34 +138,85 @@ spec:
               - |
                 # Graceful shutdown of pg_auto_failover
                 pg_autoctl stop --pgdata $PGDATA
-      # Sidecar container for pg_auto_failover management
-      - name: pg-auto-failover-sidecar
+      # Simplified sidecar container for monitoring
+      - name: pg-auto-failover-monitor
         image: citusdata/pg_auto_failover:latest
         command:
         - /bin/bash
         - -c
         - |
-          # Monitor and manage pg_auto_failover state
+          echo "Starting pg_auto_failover monitor sidecar..."
+
+          # Wait for main container to initialize
+          echo "Waiting for pg_auto_failover to initialize..."
+
+          # Wait for the configuration file to be created
+          timeout=600
+          counter=0
+          while [ ! -f "$PGDATA/pg_autoctl.cfg" ]; do
+            if [ $counter -ge $timeout ]; then
+              echo "$(date): Timeout waiting for pg_autoctl.cfg after $timeout seconds"
+              exit 1
+            fi
+            echo "$(date): Waiting for pg_autoctl.cfg to be created... ($counter/$timeout)"
+            sleep 10
+            counter=$((counter + 10))
+          done
+
+          echo "$(date): pg_autoctl.cfg found, starting monitoring..."
+
+          # Monitor pg_auto_failover state
           while true; do
-            # Check node status
-            pg_autoctl show state --pgdata /var/lib/postgresql/pg data || true
+            echo "$(date): Checking node status..."
 
-            # Update service labels based on role
-            NODE_STATE=$(pg_autoctl show state --pgdata /var/lib/postgresql/data --json 2>/dev/null | jq -r '.nodes[0].current_role // "unknown"')
+            # Check if pg_autoctl.cfg exists before running commands
+            if [ -f "$PGDATA/pg_autoctl.cfg" ]; then
+              # Show formation state
+              echo "=== Formation State ==="
+              pg_autoctl show state --pgdata $PGDATA 2>/dev/null || echo "Failed to get formation state"
 
-            if [ "$NODE_STATE" = "primary" ]; then
-              # This is a primary node
-              kubectl label pod $(hostname) role=primary --overwrite || true
-            elif [ "$NODE_STATE" = "secondary" ]; then
-              # This is a replica node
-              kubectl label pod $(hostname) role=replica --overwrite || true
+              # Show individual node status
+              echo "=== Node Status ==="
+              pg_autoctl show state --pgdata $PGDATA --local 2>/dev/null || echo "Failed to get local node state"
+
+              # Check if postgres is running
+              echo "=== PostgreSQL Status ==="
+              if pg_isready -U postgres -h localhost -p 5432 >/dev/null 2>&1; then
+                echo "PostgreSQL is ready and accepting connections"
+
+                # Get PostgreSQL version
+                psql -U postgres -h localhost -p 5432 -c "SELECT version();" 2>/dev/null | head -1 || echo "Failed to get PostgreSQL version"
+
+                # Check replication status
+                ROLE=$(psql -U postgres -h localhost -p 5432 -tAc "SELECT CASE WHEN pg_is_in_recovery() THEN 'replica' ELSE 'primary' END;" 2>/dev/null || echo "unknown")
+                echo "PostgreSQL role: $ROLE"
+
+                if [ "$ROLE" = "replica" ]; then
+                  echo "=== Replication Status ==="
+                  psql -U postgres -h localhost -p 5432 -c "SELECT now() - pg_last_xact_replay_timestamp() AS replication_lag;" 2>/dev/null || echo "Failed to get replication lag"
+                fi
+              else
+                echo "PostgreSQL not ready"
+              fi
+            else
+              echo "pg_autoctl.cfg not found, pg_auto_failover may not be initialized yet"
             fi
 
+            echo "===================="
             sleep 30
           done
         env:
         - name: PGDATA
-          value: /var/lib/postgresql/data
+          value: /var/lib/postgresql/pgdata
+        - name: PGPORT
+          value: "5432"
+        - name: PGUSER
+          value: postgres
+        - name: PGPASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-creds
+              key: postgres-password
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql/pgdata
