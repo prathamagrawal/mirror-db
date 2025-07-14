@@ -54,41 +54,74 @@ data:
         PRIORITY=100
         ;;
       *-1)
-        NODE_ROLE="sync-replica"
+        NODE_ROLE="sync_replica"
         PRIORITY=90
         ;;
       *-2|*-3)
-        NODE_ROLE="async-replica"
+        NODE_ROLE="async_replica"
         PRIORITY=80
         ;;
       *)
-        NODE_ROLE="async-replica"
+        NODE_ROLE="async_replica"
         PRIORITY=70
         ;;
     esac
 
     echo "Initializing node $NODE_NAME as $NODE_ROLE with priority $PRIORITY"
 
-    # Export environment variables
-    export PGDATA=/var/lib/postgresql/data
+    # Export environment variables - using consistent path
+    export PGDATA=/var/lib/postgresql/pgdata
     export PGPORT=5432
     export PGUSER=postgres
     export PGPASSWORD=$(cat /etc/secrets/postgres-password)
+    export MONITOR_URI="postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover"
+    export MONITOR_URI_POSTGRES="postgres://postgres@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover"
 
     # Wait for monitor to be available
     echo "Waiting for monitor to be ready..."
-    until pg_isready -h postgres-monitor.db.svc.cluster.local -p 5432 -U autoctl_node; do
-      echo "Monitor not ready, waiting..."
-      sleep 5
+    MONITOR_READY=false
+    for i in {1..30}; do
+      if pg_isready -h postgres-monitor.db.svc.cluster.local -p 5432 -U autoctl_node; then
+        MONITOR_READY=true
+        echo "Monitor is ready!"
+        break
+      fi
+      echo "Monitor not ready, waiting... (attempt $i/30)"
+      sleep 10
     done
-    echo "Connected to the master node"
+
+    if [ "$MONITOR_READY" = false ]; then
+      echo "ERROR: Monitor failed to become ready after 5 minutes"
+      exit 1
+    fi
+
+    # Check if node already exists in monitor
+    echo "Checking if node $NODE_NAME is already registered..."
+    NODE_EXISTS=$(psql "$MONITOR_URI" -tAc "SELECT COUNT(*) FROM pgautofailover.node WHERE formationid = 'default' AND nodename = '$NODE_NAME';" 2>/dev/null || echo "0")
+
+    if [ "$NODE_EXISTS" -gt 0 ]; then
+      echo "WARNING: Node $NODE_NAME already exists in monitor. Cleaning up..."
+
+      # Try to remove the existing node registration
+      psql "$MONITOR_URI_POSTGRES" -c "DELETE FROM pgautofailover.node WHERE formationid = 'default' AND nodename = '$NODE_NAME';" || {
+        echo "ERROR: Failed to remove existing node registration"
+        echo "Please manually clean up the monitor database or use a different node name"
+        exit 1
+      }
+
+      echo "Existing node registration removed successfully"
+    fi
 
     # Initialize pg_auto_failover node
     if [ ! -f "$PGDATA/PG_VERSION" ]; then
-      echo "Creating pg_auto_failover node with role: $NODE_ROLE \n\n\n"
+      echo "Creating new pg_auto_failover node with role: $NODE_ROLE"
+      mkdir -p /var/lib/postgresql/pgdata
+      # Remove any existing state files
+      rm -rf $PGDATA/*
 
+      # Create the node
       pg_autoctl create postgres \
-        --monitor postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover \
+        --monitor "$MONITOR_URI" \
         --auth trust \
         --ssl-self-signed \
         --pgdata $PGDATA \
@@ -98,45 +131,133 @@ data:
         --name $NODE_NAME \
         --candidate-priority $PRIORITY
 
-      echo "Master node in posgres created \n\n\n"
+      echo "pg_auto_failover node created successfully"
 
-      # Configure users and passwords
+    elif [ -f "$PGDATA/PG_VERSION" ]; then
+      echo "Existing PostgreSQL installation found. Checking if it's properly registered..."
+
+      # Check if this node is properly configured for pg_auto_failover
+      if [ ! -f "$PGDATA/pg_autoctl.cfg" ]; then
+        echo "WARNING: PostgreSQL exists but pg_autoctl.cfg is missing"
+        echo "This suggests an incomplete previous installation"
+
+        # Backup existing data
+        # if [ -d "$PGDATA/base" ]; then
+          # echo "Backing up existing data..."
+          # cp $PGDATA ${PGDATA}.backup.$(date +%Y%m%d_%H%M%S)
+        # fi
+
+        # Create fresh installation
+        echo "Creating fresh pg_auto_failover installation..."
+        pg_autoctl create postgres \
+          --monitor "$MONITOR_URI" \
+          --auth trust \
+          --ssl-self-signed \
+          --pgdata $PGDATA \
+          --pgport $PGPORT \
+          --listen 0.0.0.0 \
+          --hostname ${NODE_NAME}.postgres-nodes.db.svc.cluster.local \
+          --name $NODE_NAME \
+          --candidate-priority $PRIORITY
+      else
+        echo "Node appears to be properly configured for pg_auto_failover"
+      fi
+    fi
+
+    # Find where pg_autoctl.cfg was actually created
+    echo "Searching for pg_autoctl.cfg..."
+    CONFIG_FILE=""
+
+    # Check common locations
+    if [ -f "$PGDATA/pg_autoctl.cfg" ]; then
+      CONFIG_FILE="$PGDATA/pg_autoctl.cfg"
+    elif [ -f "/var/lib/postgresql/.local/share/pg_autoctl/var/lib/postgresql/pgdata/pg_autoctl.cfg" ]; then
+      CONFIG_FILE="/var/lib/postgresql/.local/share/pg_autoctl/var/lib/postgresql/pgdata/pg_autoctl.cfg"
+    else
+      # Search for it
+      CONFIG_FILE=$(find /var/lib/postgresql -name "pg_autoctl.cfg" 2>/dev/null | head -1)
+    fi
+
+    if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
+      echo "ERROR: pg_autoctl.cfg was not found!"
+      echo "Contents of PGDATA:"
+      ls -la $PGDATA/
+      echo "Contents of /var/lib/postgresql:"
+      find /var/lib/postgresql -name "pg_autoctl*" 2>/dev/null || echo "No pg_autoctl files found"
+      exit 1
+    fi
+
+    echo "Found pg_autoctl.cfg at: $CONFIG_FILE"
+
+    # If it's not in the expected location, copy it there
+    if [ "$CONFIG_FILE" != "$PGDATA/pg_autoctl.cfg" ]; then
+      echo "Copying pg_autoctl.cfg to expected location..."
+      cp "$CONFIG_FILE" "$PGDATA/pg_autoctl.cfg"
+    fi
+
+    # Start PostgreSQL temporarily for user setup (only for new installations)
+    if [ "$NODE_ROLE" = "master" ] && [ ! -f "$PGDATA/.users_configured" ]; then
+      echo "Starting PostgreSQL for user configuration..."
       pg_ctl -D $PGDATA -l /tmp/pg.log start
-      sleep 5
 
-      echo "Master node users and password done\n\n\n"
+      # Wait for PostgreSQL to be ready
+      for i in {1..30}; do
+        if pg_isready -U postgres; then
+          echo "PostgreSQL is ready for configuration"
+          break
+        fi
+        echo "Waiting for PostgreSQL to be ready... (attempt $i/30)"
+        sleep 2
+      done
 
-      # Set up users
+      # Set up users and database
+      echo "Configuring users and database..."
+
       # Set the postgres password
       psql -d postgres -c "ALTER USER postgres PASSWORD '$(cat /etc/secrets/postgres-password)';"
 
       # Create replicator user if it does not exist
-      psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1 || \
-      psql -d postgres -c "CREATE USER replicator REPLICATION LOGIN PASSWORD '$(cat /etc/secrets/replicator-password)';"
+      if ! psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1; then
+        psql -d postgres -c "CREATE USER replicator REPLICATION LOGIN PASSWORD '$(cat /etc/secrets/replicator-password)';"
+        echo "Created replicator user"
+      fi
 
       # Create appuser if it does not exist
-      psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='appuser'" | grep -q 1 || \
-      psql -d postgres -c "CREATE USER appuser LOGIN PASSWORD '$(cat /etc/secrets/app-password)';"
+      if ! psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='appuser'" | grep -q 1; then
+        psql -d postgres -c "CREATE USER appuser LOGIN PASSWORD '$(cat /etc/secrets/app-password)';"
+        echo "Created appuser"
+      fi
 
       # Create mydb database if it does not exist
-      psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='mydb'" | grep -q 1 || \
-      psql -d postgres -c "CREATE DATABASE mydb OWNER appuser;"
+      if ! psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='mydb'" | grep -q 1; then
+        psql -d postgres -c "CREATE DATABASE mydb OWNER appuser;"
+        echo "Created mydb database"
+      fi
 
+      # Mark users as configured
+      touch "$PGDATA/.users_configured"
+
+      # Stop PostgreSQL
+      echo "Stopping PostgreSQL..."
       pg_ctl -D $PGDATA stop
-
-      if [ -f /etc/config/postgresql.conf ]; then
-        echo "Copying postgresql.conf..."
-        cp /etc/config/postgresql.conf $PGDATA/
-      fi
-
-      if [ -f /etc/config/pg_hba.conf ]; then
-        echo "Copying pg_hba.conf..."
-        cp /etc/config/pg_hba.conf $PGDATA/
-      fi
-      chown -R postgres:postgres $PGDATA
-      chmod 700 $PGDATA
-
-      echo "Node initialization completed"
-    else
-      echo "Node already initialized"
     fi
+
+    # Copy configuration files if they exist
+    if [ -f /etc/config/postgresql.conf ]; then
+      echo "Copying postgresql.conf..."
+      cp /etc/config/postgresql.conf $PGDATA/
+    fi
+
+    if [ -f /etc/config/pg_hba.conf ]; then
+      echo "Copying pg_hba.conf..."
+      cp /etc/config/pg_hba.conf $PGDATA/
+    fi
+
+    # Ensure proper ownership and permissions
+    chown -R $(id -u):$(id -g) $PGDATA
+    chmod 700 $PGDATA
+
+    # Signal that initialization is complete
+    touch /shared/init_complete
+
+    echo "Initialization script completed successfully for $NODE_NAME"
