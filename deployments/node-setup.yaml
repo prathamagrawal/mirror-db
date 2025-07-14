@@ -58,6 +58,11 @@ spec:
           value: postgres
         - name: PG_AUTOCTL_MONITOR
           value: postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-creds
+              key: postgres-password
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql/pgdata
@@ -70,6 +75,9 @@ spec:
         - name: pg-auto-failover-config
           mountPath: /etc/scripts
           readOnly: true
+        - name: shared-config
+          mountPath: /shared
+
       containers:
       - name: postgres
         image: citusdata/pg_auto_failover:latest
@@ -100,13 +108,32 @@ spec:
         - |
           set -e
 
-          # Ensure pg_autoctl.cfg exists
+          # Wait for init container to complete and create the config file
+          echo "Waiting for pg_auto_failover initialization..."
+          timeout=300
+          counter=0
+          while [ ! -f "$PGDATA/pg_autoctl.cfg" ] && [ ! -f "/shared/init_complete" ]; do
+            if [ $counter -ge $timeout ]; then
+              echo "ERROR: Timeout waiting for pg_autoctl.cfg after $timeout seconds"
+              echo "Contents of PGDATA:"
+              ls -la $PGDATA/ || echo "Could not list PGDATA contents"
+              echo "Contents of /shared:"
+              ls -la /shared/ || echo "Could not list /shared contents"
+              exit 1
+            fi
+            echo "Waiting for initialization to complete... ($counter/$timeout)"
+            sleep 5
+            counter=$((counter + 5))
+          done
+
           if [ ! -f "$PGDATA/pg_autoctl.cfg" ]; then
-            echo "ERROR: pg_autoctl.cfg not found! Init container may have failed."
+            echo "ERROR: pg_autoctl.cfg not found after initialization!"
+            echo "Contents of PGDATA:"
+            ls -la $PGDATA/ || echo "Could not list PGDATA contents"
             exit 1
           fi
 
-          echo "Starting pg_auto_failover..."
+          echo "pg_autoctl.cfg found, starting pg_auto_failover..."
 
           # Start pg_auto_failover
           exec pg_autoctl run --pgdata $PGDATA
@@ -122,6 +149,8 @@ spec:
         - name: pg-auto-failover-config
           mountPath: /etc/pg-auto-failover
           readOnly: true
+        - name: shared-config
+          mountPath: /shared
         resources:
           requests:
             memory: "512Mi"
@@ -156,6 +185,8 @@ spec:
           while [ ! -f "$PGDATA/pg_autoctl.cfg" ]; do
             if [ $counter -ge $timeout ]; then
               echo "$(date): Timeout waiting for pg_autoctl.cfg after $timeout seconds"
+              echo "Contents of PGDATA:"
+              ls -la $PGDATA/ || echo "Could not list PGDATA contents"
               exit 1
             fi
             echo "$(date): Waiting for pg_autoctl.cfg to be created... ($counter/$timeout)"
@@ -223,6 +254,8 @@ spec:
         - name: postgres-secrets
           mountPath: /etc/secrets
           readOnly: true
+        - name: shared-config
+          mountPath: /shared
         resources:
           requests:
             memory: "64Mi"
@@ -230,6 +263,7 @@ spec:
           limits:
             memory: "128Mi"
             cpu: "100m"
+
       volumes:
       - name: postgres-node-config
         configMap:
@@ -241,6 +275,8 @@ spec:
         configMap:
           name: pg-auto-failover-config
           defaultMode: 0755
+      - name: shared-config
+        emptyDir: {}
       restartPolicy: Always
       serviceAccountName: postgres-service-account
   volumeClaimTemplates:

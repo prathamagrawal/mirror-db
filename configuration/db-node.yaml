@@ -37,7 +37,7 @@ data:
     wal_sender_timeout = 60s                # Sender timeout
 
     # Synchronous replication settings
-    synchronous_standby_names = 'sync-replica'  # Will be managed by pg_auto_failover
+    synchronous_standby_names = 'first 1 (sync_replica)'  # Will be managed by pg_auto_failover
     synchronous_commit = on                     # Ensure synchronous commits
 
     # Archive settings (configure for your backup solution)
