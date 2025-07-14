@@ -25,27 +25,34 @@ spec:
       initContainers:
       - name: fix-perms
         image: busybox
-        command: ["sh", "-c", "chown -R 101:101 /var/lib/postgresql/pgdata"]
+        command: 
+        - "sh"
+        - "-c"
+        - |
+          echo "Setting up directory permissions..."
+          chown -R 101:101 /var/lib/postgresql/pgdata || echo "Failed to chown pgdata, continuing..."
+          chmod 700 /var/lib/postgresql/pgdata || echo "Failed to chmod pgdata, continuing..."
+          
+          # Create and set permissions for config directory
+          mkdir -p /var/lib/postgresql/.config
+          chown -R 101:101 /var/lib/postgresql/.config || echo "Failed to chown .config, continuing..."
+          chmod -R 755 /var/lib/postgresql/.config || echo "Failed to chmod .config, continuing..."
+          
+          # Create the full config path
+          mkdir -p /var/lib/postgresql/.config/pg_autoctl/var/lib/postgresql/pgdata
+          chown -R 101:101 /var/lib/postgresql/.config/pg_autoctl || echo "Failed to chown pg_autoctl dir, continuing..."
+          chmod -R 755 /var/lib/postgresql/.config/pg_autoctl || echo "Failed to chmod pg_autoctl dir, continuing..."
+          
+          echo "Permission setup completed"
         securityContext:
           runAsUser: 0
         volumeMounts:
           - name: postgres-data
-            mountPath: /var/lib/postgresql/pgdata
+            mountPath: /var/lib/postgresql
 
       - name: pg-auto-failover-init
         image: citusdata/pg_auto_failover:latest
         command: ["/bin/bash", "/etc/scripts/init-node.sh"]
-        args:
-          - -c
-          - |
-              # Ensure postgres user exists in /etc/passwd
-              if ! getent passwd postgres > /dev/null 2>&1; then
-                echo "postgres:x:102:102:PostgreSQL Server:/var/lib/postgresql:/bin/bash" >> /etc/passwd
-              fi
-              # Create home directory
-              mkdir -p /var/lib/postgresql
-              chown 102:102 /var/lib/postgresql
-
         securityContext:
           runAsGroup: 101
           runAsUser: 101
@@ -56,6 +63,8 @@ spec:
           value: "5432"
         - name: PGUSER
           value: postgres
+        - name: PG_AUTOCTL_HOME
+          value: /var/lib/postgresql
         - name: PG_AUTOCTL_MONITOR
           value: postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover
         - name: POSTGRES_PASSWORD
@@ -65,7 +74,7 @@ spec:
               key: postgres-password
         volumeMounts:
         - name: postgres-data
-          mountPath: /var/lib/postgresql/pgdata
+          mountPath: /var/lib/postgresql
         - name: postgres-node-config
           mountPath: /etc/config
           readOnly: true
@@ -91,6 +100,8 @@ spec:
           value: "5432"
         - name: PGUSER
           value: postgres
+        - name: PG_AUTOCTL_HOME
+          value: /var/lib/postgresql
         - name: POSTGRES_PASSWORD
           valueFrom:
             secretKeyRef:
@@ -108,17 +119,24 @@ spec:
         - |
           set -e
 
+          # Define the expected pg_autoctl.cfg location
+          PG_AUTOCTL_CFG_PATH="/var/lib/postgresql/.config/pg_autoctl/var/lib/postgresql/pgdata/pg_autoctl.cfg"
+
           # Wait for init container to complete and create the config file
           echo "Waiting for pg_auto_failover initialization..."
           timeout=300
           counter=0
-          while [ ! -f "$PGDATA/pg_autoctl.cfg" ] && [ ! -f "/shared/init_complete" ]; do
+          while [ ! -f "$PG_AUTOCTL_CFG_PATH" ] && [ ! -f "/shared/init_complete" ]; do
             if [ $counter -ge $timeout ]; then
               echo "ERROR: Timeout waiting for pg_autoctl.cfg after $timeout seconds"
               echo "Contents of PGDATA:"
               ls -la $PGDATA/ || echo "Could not list PGDATA contents"
+              echo "Contents of /var/lib/postgresql/.config:"
+              ls -la /var/lib/postgresql/.config/ || echo "Could not list .config contents"
               echo "Contents of /shared:"
               ls -la /shared/ || echo "Could not list /shared contents"
+              echo "Searching for pg_autoctl.cfg files:"
+              find /var/lib/postgresql -name "pg_autoctl.cfg" 2>/dev/null || echo "No pg_autoctl.cfg files found"
               exit 1
             fi
             echo "Waiting for initialization to complete... ($counter/$timeout)"
@@ -126,20 +144,25 @@ spec:
             counter=$((counter + 5))
           done
 
-          if [ ! -f "$PGDATA/pg_autoctl.cfg" ]; then
-            echo "ERROR: pg_autoctl.cfg not found after initialization!"
+          if [ ! -f "$PG_AUTOCTL_CFG_PATH" ]; then
+            echo "ERROR: pg_autoctl.cfg not found at expected location: $PG_AUTOCTL_CFG_PATH"
             echo "Contents of PGDATA:"
             ls -la $PGDATA/ || echo "Could not list PGDATA contents"
+            echo "Contents of /var/lib/postgresql/.config:"
+            ls -la /var/lib/postgresql/.config/ || echo "Could not list .config contents"
+            echo "Searching for pg_autoctl.cfg files:"
+            find /var/lib/postgresql -name "pg_autoctl.cfg" 2>/dev/null || echo "No pg_autoctl.cfg files found"
             exit 1
           fi
 
-          echo "pg_autoctl.cfg found, starting pg_auto_failover..."
+          echo "pg_autoctl.cfg found at: $PG_AUTOCTL_CFG_PATH"
+          echo "Starting pg_auto_failover..."
 
           # Start pg_auto_failover
           exec pg_autoctl run --pgdata $PGDATA
         volumeMounts:
         - name: postgres-data
-          mountPath: /var/lib/postgresql/pgdata
+          mountPath: /var/lib/postgresql
         - name: postgres-node-config
           mountPath: /etc/config
           readOnly: true
@@ -167,7 +190,7 @@ spec:
               - |
                 # Graceful shutdown of pg_auto_failover
                 pg_autoctl stop --pgdata $PGDATA
-      # Simplified sidecar container for monitoring
+
       - name: pg-auto-failover-monitor
         image: citusdata/pg_auto_failover:latest
         command:
@@ -176,17 +199,22 @@ spec:
         - |
           echo "Starting pg_auto_failover monitor sidecar..."
 
+          # Define the expected pg_autoctl.cfg location
+          PG_AUTOCTL_CFG_PATH="/var/lib/postgresql/.config/pg_autoctl/var/lib/postgresql/pgdata/pg_autoctl.cfg"
+
           # Wait for main container to initialize
           echo "Waiting for pg_auto_failover to initialize..."
 
           # Wait for the configuration file to be created
           timeout=600
           counter=0
-          while [ ! -f "$PGDATA/pg_autoctl.cfg" ]; do
+          while [ ! -f "$PG_AUTOCTL_CFG_PATH" ]; do
             if [ $counter -ge $timeout ]; then
               echo "$(date): Timeout waiting for pg_autoctl.cfg after $timeout seconds"
               echo "Contents of PGDATA:"
               ls -la $PGDATA/ || echo "Could not list PGDATA contents"
+              echo "Contents of /var/lib/postgresql/.config:"
+              ls -la /var/lib/postgresql/.config/ || echo "Could not list .config contents"
               exit 1
             fi
             echo "$(date): Waiting for pg_autoctl.cfg to be created... ($counter/$timeout)"
@@ -194,14 +222,15 @@ spec:
             counter=$((counter + 10))
           done
 
-          echo "$(date): pg_autoctl.cfg found, starting monitoring..."
+          echo "$(date): pg_autoctl.cfg found at: $PG_AUTOCTL_CFG_PATH"
+          echo "$(date): Starting monitoring..."
 
           # Monitor pg_auto_failover state
           while true; do
             echo "$(date): Checking node status..."
 
             # Check if pg_autoctl.cfg exists before running commands
-            if [ -f "$PGDATA/pg_autoctl.cfg" ]; then
+            if [ -f "$PG_AUTOCTL_CFG_PATH" ]; then
               # Show formation state
               echo "=== Formation State ==="
               pg_autoctl show state --pgdata $PGDATA 2>/dev/null || echo "Failed to get formation state"
@@ -230,7 +259,7 @@ spec:
                 echo "PostgreSQL not ready"
               fi
             else
-              echo "pg_autoctl.cfg not found, pg_auto_failover may not be initialized yet"
+              echo "pg_autoctl.cfg not found at: $PG_AUTOCTL_CFG_PATH"
             fi
 
             echo "===================="
@@ -243,6 +272,8 @@ spec:
           value: "5432"
         - name: PGUSER
           value: postgres
+        - name: PG_AUTOCTL_HOME
+          value: /var/lib/postgresql
         - name: PGPASSWORD
           valueFrom:
             secretKeyRef:
@@ -250,7 +281,7 @@ spec:
               key: postgres-password
         volumeMounts:
         - name: postgres-data
-          mountPath: /var/lib/postgresql/pgdata
+          mountPath: /var/lib/postgresql
         - name: postgres-secrets
           mountPath: /etc/secrets
           readOnly: true

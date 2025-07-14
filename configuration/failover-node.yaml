@@ -69,11 +69,12 @@ data:
 
     echo "Initializing node $NODE_NAME as $NODE_ROLE with priority $PRIORITY"
 
-    # Export environment variables - using consistent path
+    # Export environment variables
     export PGDATA=/var/lib/postgresql/pgdata
     export PGPORT=5432
     export PGUSER=postgres
     export PGPASSWORD=$(cat /etc/secrets/postgres-password)
+    export PG_AUTOCTL_HOME=/var/lib/postgresql
     export MONITOR_URI="postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover"
     export MONITOR_URI_POSTGRES="postgres://postgres@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover"
 
@@ -112,14 +113,18 @@ data:
       echo "Existing node registration removed successfully"
     fi
 
+    # Define the expected pg_autoctl.cfg location
+    PG_AUTOCTL_CFG_PATH="/var/lib/postgresql/.config/pg_autoctl/var/lib/postgresql/pgdata/pg_autoctl.cfg"
+
     # Initialize pg_auto_failover node
     if [ ! -f "$PGDATA/PG_VERSION" ]; then
       echo "Creating new pg_auto_failover node with role: $NODE_ROLE"
       mkdir -p /var/lib/postgresql/pgdata
+      mkdir -p /var/lib/postgresql/.config/pg_autoctl/var/lib/postgresql/pgdata
       # Remove any existing state files
       rm -rf $PGDATA/*
 
-      # Create the node
+      # Create the node with explicit home directory
       pg_autoctl create postgres \
         --monitor "$MONITOR_URI" \
         --auth trust \
@@ -137,18 +142,13 @@ data:
       echo "Existing PostgreSQL installation found. Checking if it's properly registered..."
 
       # Check if this node is properly configured for pg_auto_failover
-      if [ ! -f "$PGDATA/pg_autoctl.cfg" ]; then
+      if [ ! -f "$PG_AUTOCTL_CFG_PATH" ]; then
         echo "WARNING: PostgreSQL exists but pg_autoctl.cfg is missing"
         echo "This suggests an incomplete previous installation"
 
-        # Backup existing data
-        # if [ -d "$PGDATA/base" ]; then
-          # echo "Backing up existing data..."
-          # cp $PGDATA ${PGDATA}.backup.$(date +%Y%m%d_%H%M%S)
-        # fi
-
         # Create fresh installation
         echo "Creating fresh pg_auto_failover installation..."
+        mkdir -p /var/lib/postgresql/.config/pg_autoctl/var/lib/postgresql/pgdata
         pg_autoctl create postgres \
           --monitor "$MONITOR_URI" \
           --auth trust \
@@ -164,36 +164,19 @@ data:
       fi
     fi
 
-    # Find where pg_autoctl.cfg was actually created
-    echo "Searching for pg_autoctl.cfg..."
-    CONFIG_FILE=""
-
-    # Check common locations
-    if [ -f "$PGDATA/pg_autoctl.cfg" ]; then
-      CONFIG_FILE="$PGDATA/pg_autoctl.cfg"
-    elif [ -f "/var/lib/postgresql/.local/share/pg_autoctl/var/lib/postgresql/pgdata/pg_autoctl.cfg" ]; then
-      CONFIG_FILE="/var/lib/postgresql/.local/share/pg_autoctl/var/lib/postgresql/pgdata/pg_autoctl.cfg"
-    else
-      # Search for it
-      CONFIG_FILE=$(find /var/lib/postgresql -name "pg_autoctl.cfg" 2>/dev/null | head -1)
-    fi
-
-    if [ -z "$CONFIG_FILE" ] || [ ! -f "$CONFIG_FILE" ]; then
-      echo "ERROR: pg_autoctl.cfg was not found!"
+    # Verify configuration file exists in the expected location
+    if [ ! -f "$PG_AUTOCTL_CFG_PATH" ]; then
+      echo "ERROR: pg_autoctl.cfg was not created at expected location $PG_AUTOCTL_CFG_PATH"
       echo "Contents of PGDATA:"
       ls -la $PGDATA/
-      echo "Contents of /var/lib/postgresql:"
-      find /var/lib/postgresql -name "pg_autoctl*" 2>/dev/null || echo "No pg_autoctl files found"
+      echo "Contents of /var/lib/postgresql/.config/:"
+      ls -la /var/lib/postgresql/.config/ 2>/dev/null || echo "Directory doesn't exist"
+      echo "Searching for pg_autoctl.cfg files..."
+      find /var/lib/postgresql -name "pg_autoctl.cfg" 2>/dev/null || echo "No pg_autoctl.cfg files found"
       exit 1
     fi
 
-    echo "Found pg_autoctl.cfg at: $CONFIG_FILE"
-
-    # If it's not in the expected location, copy it there
-    if [ "$CONFIG_FILE" != "$PGDATA/pg_autoctl.cfg" ]; then
-      echo "Copying pg_autoctl.cfg to expected location..."
-      cp "$CONFIG_FILE" "$PGDATA/pg_autoctl.cfg"
-    fi
+    echo "Found pg_autoctl.cfg at expected location: $PG_AUTOCTL_CFG_PATH"
 
     # Start PostgreSQL temporarily for user setup (only for new installations)
     if [ "$NODE_ROLE" = "master" ] && [ ! -f "$PGDATA/.users_configured" ]; then
@@ -253,9 +236,12 @@ data:
       cp /etc/config/pg_hba.conf $PGDATA/
     fi
 
-    # Ensure proper ownership and permissions
-    chown -R $(id -u):$(id -g) $PGDATA
+    # Ensure proper permissions (ownership should already be set by init containers)
     chmod 700 $PGDATA
+    # Set permissions on config directory if it exists
+    if [ -d "/var/lib/postgresql/.config" ]; then
+      chmod -R 755 /var/lib/postgresql/.config
+    fi
 
     # Signal that initialization is complete
     touch /shared/init_complete
