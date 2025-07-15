@@ -205,6 +205,15 @@ data:
         echo "Created replicator user"
       fi
 
+      # Create pgautofailover_replicator user if it does not exist
+      if ! psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='pgautofailover_replicator'" | grep -q 1; then
+        psql -d postgres -c "CREATE USER pgautofailover_replicator WITH REPLICATION LOGIN PASSWORD '$(cat /etc/secrets/replicator-password)';"
+        psql -d postgres -c "ALTER USER pgautofailover_replicator WITH PASSWORD 'replicauser123';"
+
+        echo "Created pgautofailover_replicator user"
+      fi
+
+
       # Create appuser if it does not exist
       if ! psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='appuser'" | grep -q 1; then
         psql -d postgres -c "CREATE USER appuser LOGIN PASSWORD '$(cat /etc/secrets/app-password)';"
@@ -235,6 +244,18 @@ data:
       echo "Copying pg_hba.conf..."
       cp /etc/config/pg_hba.conf $PGDATA/
     fi
+
+    echo "Ensuring pg_hba.conf has replication entry for pgautofailover_replicator..."
+    REPL_ENTRY="host    replication     pgautofailover_replicator     all     md5"
+
+    if ! grep -q "$REPL_ENTRY" "$PGDATA/pg_hba.conf"; then
+      echo "$REPL_ENTRY" >> "$PGDATA/pg_hba.conf"
+      echo "Added pgautofailover_replicator replication entry to pg_hba.conf"
+    else
+      echo "pg_hba.conf already contains pgautofailover_replicator replication entry"
+    fi
+
+
 
     # Ensure proper permissions (ownership should already be set by init containers)
     chmod 700 $PGDATA
