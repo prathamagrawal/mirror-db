@@ -72,6 +72,11 @@ spec:
             secretKeyRef:
               name: postgres-creds
               key: postgres-password
+        - name: PG_AUTOCTL_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-creds
+              key: replicator-password
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql
@@ -113,6 +118,11 @@ spec:
           value: "true"
         - name: PG_AUTOCTL_SSL_MODE
           value: require
+        - name: PG_AUTOCTL_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-creds
+              key: replicator-password
         command:
         - /bin/bash
         - -c
@@ -279,6 +289,12 @@ spec:
             secretKeyRef:
               name: postgres-creds
               key: postgres-password
+        - name: PG_AUTOCTL_REPLICATION_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-creds
+              key: replicator-password
+
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql

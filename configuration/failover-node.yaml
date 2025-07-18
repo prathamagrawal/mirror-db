@@ -41,7 +41,7 @@ data:
 
   # Initialization script for nodes
   init-node.sh: |
-    #!/bin/bash
+   #!/bin/bash
     set -e
 
     NODE_NAME=$(hostname)
@@ -77,6 +77,7 @@ data:
     export PG_AUTOCTL_HOME=/var/lib/postgresql
     export MONITOR_URI="postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover"
     export MONITOR_URI_POSTGRES="postgres://postgres@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover"
+    export PG_AUTOCTL_REPLICATION_PASSWORD=$(cat /etc/secrets/replicator-password)  # Fixed typo
 
     # Wait for monitor to be available
     echo "Waiting for monitor to be ready..."
@@ -135,6 +136,12 @@ data:
         --hostname ${NODE_NAME}.postgres-nodes.db.svc.cluster.local \
         --name $NODE_NAME \
         --candidate-priority $PRIORITY
+
+      if [ $? -ne 0 ]; then
+        echo "pg_autoctl create failed. Showing logs..."
+        find /var/log -type f -exec tail -n 50 {} +
+        exit 1
+      fi
 
       echo "pg_auto_failover node created successfully"
 
@@ -199,20 +206,26 @@ data:
       # Set the postgres password
       psql -d postgres -c "ALTER USER postgres PASSWORD '$(cat /etc/secrets/postgres-password)';"
 
+      # Get the replicator password from secret
+      REPLICATOR_PASSWORD=$(cat /etc/secrets/replicator-password)
+
       # Create replicator user if it does not exist
       if ! psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1; then
-        psql -d postgres -c "CREATE USER replicator REPLICATION LOGIN PASSWORD '$(cat /etc/secrets/replicator-password)';"
+        psql -d postgres -c "CREATE USER replicator REPLICATION LOGIN PASSWORD '$REPLICATOR_PASSWORD';"
         echo "Created replicator user"
       fi
 
-      # Create pgautofailover_replicator user if it does not exist
+      # Create pgautofailover_replicator if missing
       if ! psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='pgautofailover_replicator'" | grep -q 1; then
-        psql -d postgres -c "CREATE USER pgautofailover_replicator WITH REPLICATION LOGIN PASSWORD '$(cat /etc/secrets/replicator-password)';"
-        psql -d postgres -c "ALTER USER pgautofailover_replicator WITH PASSWORD 'replicauser123';"
-
+        psql -d postgres -c "CREATE USER pgautofailover_replicator REPLICATION LOGIN PASSWORD '$REPLICATOR_PASSWORD';"
         echo "Created pgautofailover_replicator user"
+      else
+        echo "pgautofailover_replicator user already exists"
       fi
 
+      # Set the correct password for pgautofailover_replicator (use the same password from secret)
+      psql -d postgres -c "ALTER USER pgautofailover_replicator WITH PASSWORD '$REPLICATOR_PASSWORD';"
+      echo "Updated pgautofailover_replicator password"
 
       # Create appuser if it does not exist
       if ! psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='appuser'" | grep -q 1; then
@@ -245,17 +258,16 @@ data:
       cp /etc/config/pg_hba.conf $PGDATA/
     fi
 
-    echo "Ensuring pg_hba.conf has replication entry for pgautofailover_replicator..."
-    REPL_ENTRY="host    replication     pgautofailover_replicator     all     md5"
+    echo "Ensuring pg_hba.conf has replication entries..."
 
-    if ! grep -q "$REPL_ENTRY" "$PGDATA/pg_hba.conf"; then
-      echo "$REPL_ENTRY" >> "$PGDATA/pg_hba.conf"
-      echo "Added pgautofailover_replicator replication entry to pg_hba.conf"
-    else
-      echo "pg_hba.conf already contains pgautofailover_replicator replication entry"
-    fi
+    # Ensure pg_hba.conf has the necessary replication entries
+    echo "" >> "$PGDATA/pg_hba.conf"
+    echo "# pg_auto_failover replication entries" >> "$PGDATA/pg_hba.conf"
+    echo "host    replication     pgautofailover_replicator     all     md5" >> "$PGDATA/pg_hba.conf"
+    echo "host    replication     replicator                    all     md5" >> "$PGDATA/pg_hba.conf"
+    echo "host    all             pgautofailover_replicator     all     md5" >> "$PGDATA/pg_hba.conf"
 
-
+    echo "Added replication entries to pg_hba.conf"
 
     # Ensure proper permissions (ownership should already be set by init containers)
     chmod 700 $PGDATA

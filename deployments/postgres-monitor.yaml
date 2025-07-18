@@ -1,0 +1,64 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-monitor
+  namespace: db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-monitor
+  template:
+    metadata:
+      labels:
+        app: postgres-monitor
+    spec:
+      securityContext:
+        fsGroup: 101
+        runAsUser: 101
+        runAsGroup: 101
+      initContainers:
+        - name: init-db
+          image: citusdata/pg_auto_failover:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              #!/bin/bash
+              set -eux
+              mkdir -p /var/lib/postgresql/pgdata
+              export PGDATA=/var/lib/postgresql/pgdata/monitor
+              export PGPORT=6001
+              MY_IP=$(hostname -i)
+              pg_autoctl create monitor --hostname "$MY_IP" --pgport "$PGPORT" --auth trust --no-ssl
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/pgdata
+      containers:
+        - name: postgres-monitor
+          image: citusdata/pg_auto_failover:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              #!/bin/bash
+              set -eux
+              cd /var/lib/postgresql/pgdata/monitor
+              export PGDATA=/var/lib/postgresql/pgdata/monitor
+              export PGPORT=6001
+              exec pg_autoctl run --pgdata /var/lib/postgresql/pgdata/monitor
+          securityContext:
+            runAsGroup: 101
+            runAsUser: 101
+          ports:
+            - containerPort: 6001
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/pgdata/monitor
+            - name: PGPORT
+              value: "6001"
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/pgdata
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: postgres-monitor-pvc
