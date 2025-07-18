@@ -14,6 +14,6 @@ spec:
   volumes:
     - name: debug-vol
       persistentVolumeClaim:
-        claimName: postgres-monitor-pvc
+        claimName: postgres-data-postgres-nodes-0
   restartPolicy: Never
 
