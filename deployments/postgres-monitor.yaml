@@ -17,22 +17,6 @@ spec:
         fsGroup: 101
         runAsUser: 101
         runAsGroup: 101
-      initContainers:
-        - name: init-db
-          image: citusdata/pg_auto_failover:latest
-          command: ["/bin/bash", "-c"]
-          args:
-            - |
-              #!/bin/bash
-              set -eux
-              mkdir -p /var/lib/postgresql/pgdata
-              export PGDATA=/var/lib/postgresql/pgdata/monitor
-              export PGPORT=6001
-              MY_IP=$(hostname -i)
-              pg_autoctl create monitor --hostname "$MY_IP" --pgport "$PGPORT" --auth trust --no-ssl
-          volumeMounts:
-            - name: pgdata
-              mountPath: /var/lib/postgresql/pgdata
       containers:
         - name: postgres-monitor
           image: citusdata/pg_auto_failover:latest
@@ -41,23 +25,69 @@ spec:
             - |
               #!/bin/bash
               set -eux
-              cd /var/lib/postgresql/pgdata/monitor
+              
+              # Set PATH to include PostgreSQL binaries
+              export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+              
+              # Create data directory with proper permissions
+              mkdir -p /var/lib/postgresql/pgdata
+              
+              # Set PostgreSQL environment variables
               export PGDATA=/var/lib/postgresql/pgdata/monitor
               export PGPORT=6001
-              exec pg_autoctl run --pgdata /var/lib/postgresql/pgdata/monitor
+              export PGUSER=postgres
+              
+              # Get container IP
+              MY_IP=$(hostname -i)
+              
+              # Initialize the monitor
+              pg_autoctl create monitor \
+                --hostname "$MY_IP" \
+                --pgport "$PGPORT" \
+                --auth trust \
+                --ssl-self-signed \
+                --pgdata "$PGDATA" \
+                --run
+
           securityContext:
-            runAsGroup: 101
             runAsUser: 101
+            runAsGroup: 101
           ports:
             - containerPort: 6001
+              name: postgres
           env:
             - name: PGDATA
               value: /var/lib/postgresql/pgdata/monitor
             - name: PGPORT
               value: "6001"
+            - name: PGUSER
+              value: postgres
+            - name: PATH
+              value: "/usr/lib/postgresql/11/bin:/usr/local/bin:/usr/bin:/bin"
           volumeMounts:
             - name: pgdata
               mountPath: /var/lib/postgresql/pgdata
+          # Add readiness and liveness probes
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+                  pg_isready -h localhost -p 6001 -U postgres
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+                  pg_isready -h localhost -p 6001 -U postgres
+            initialDelaySeconds: 30
+            periodSeconds: 10
       volumes:
         - name: pgdata
           persistentVolumeClaim:
