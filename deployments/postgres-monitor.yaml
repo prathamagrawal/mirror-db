@@ -17,8 +17,8 @@ spec:
         fsGroup: 101
         runAsUser: 101
         runAsGroup: 101
-      containers:
-        - name: postgres-monitor
+      initContainers:
+        - name: init-db
           image: citusdata/pg_auto_failover:latest
           command: ["/bin/bash", "-c"]
           args:
@@ -46,9 +46,27 @@ spec:
                 --pgport "$PGPORT" \
                 --auth trust \
                 --ssl-self-signed \
-                --pgdata "$PGDATA" \
-                --run
+                --pgdata "$PGDATA"
 
+              echo "Pg_autoctl initialization complete"
+          securityContext:
+            runAsUser: 101
+            runAsGroup: 101
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: postgres-monitor-pvc
+      containers:
+        - name: postgres-monitor
+          image: citusdata/pg_auto_failover:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              #!/bin/bash
+              pg_autoctl run
           securityContext:
             runAsUser: 101
             runAsGroup: 101
@@ -66,7 +84,7 @@ spec:
               value: "/usr/lib/postgresql/11/bin:/usr/local/bin:/usr/bin:/bin"
           volumeMounts:
             - name: pgdata
-              mountPath: /var/lib/postgresql/pgdata
+              mountPath: /var/lib/postgresql/
           # Add readiness and liveness probes
           readinessProbe:
             exec:
