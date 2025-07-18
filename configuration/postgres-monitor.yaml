@@ -1,7 +1,0 @@
-apiVersion: v1
-kind: ConfigMap
-metadata:
-     name: postgres-monitor-config
-     namespace: db
-data:
-    init-monitor.sh: |
