@@ -1,4 +1,3 @@
-# Updated StatefulSet with better resource limits and health checks
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -92,6 +91,55 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1000m"
+        # Readiness Probe - checks if ready to accept connections
+        readinessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - |
+              NODE_NAME=$(hostname)
+              case $NODE_NAME in
+                *-0) PGPORT=6002 ;;
+                *-1) PGPORT=6003 ;;
+                *-2) PGPORT=6004 ;;
+                *-3) PGPORT=6005 ;;
+                *) PGPORT=6006 ;;
+              esac
+              export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+              # Check if postgres is ready and pg_auto_failover is functioning
+              pg_isready -h localhost -p $PGPORT -U postgres
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 15
+          successThreshold: 1
+          failureThreshold: 5
+        # Liveness Probe - checks if container should be restarted
+        livenessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - |
+              NODE_NAME=$(hostname)
+              case $NODE_NAME in
+                *-0) PGPORT=6002; PGDATA="/var/lib/postgresql/pgdata/master" ;;
+                *-1) PGPORT=6003; PGDATA="/var/lib/postgresql/pgdata/syncreplica" ;;
+                *-2) PGPORT=6004; PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
+                *-3) PGPORT=6005; PGDATA="/var/lib/postgresql/pgdata/asyncreplica2" ;;
+                *) PGPORT=6006; PGDATA="/var/lib/postgresql/pgdata/replica" ;;
+              esac
+              export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+              # Check postgres connectivity and basic query execution
+              pg_isready -h localhost -p $PGPORT -U postgres && \
+              psql -h localhost -p $PGPORT -U postgres -d postgres -c 'SELECT 1;' > /dev/null 2>&1 && \
+              # Verify pg_auto_failover process is running
+              pgrep -f "pg_autoctl run" > /dev/null
+          initialDelaySeconds: 60
+          periodSeconds: 60
+          timeoutSeconds: 20
+          successThreshold: 1
+          failureThreshold: 5
         lifecycle:
           preStop:
             exec:
@@ -100,6 +148,14 @@ spec:
               - -c
               - |
                 # Graceful shutdown of pg_auto_failover
+                NODE_NAME=$(hostname)
+                case $NODE_NAME in
+                  *-0) PGDATA="/var/lib/postgresql/pgdata/master" ;;
+                  *-1) PGDATA="/var/lib/postgresql/pgdata/syncreplica" ;;
+                  *-2) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
+                  *-3) PGDATA="/var/lib/postgresql/pgdata/asyncreplica2" ;;
+                  *) PGDATA="/var/lib/postgresql/pgdata/replica" ;;
+                esac
                 pg_autoctl stop --pgdata $PGDATA
       volumes:
       - name: postgres-node-config
