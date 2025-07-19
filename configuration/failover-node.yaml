@@ -5,138 +5,119 @@ metadata:
   name: pg-auto-failover-config
   namespace: db
 data:
-  # Formation and group settings
-  formation-settings.conf: |
-    # pg_auto_failover formation configuration
-    # Formation name - logical grouping of nodes
-    PG_AUTOCTL_FORMATION=default
-
-    # Monitor URI - will be set dynamically
-    PG_AUTOCTL_MONITOR=postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover
-
-    # Node settings
-    PG_AUTOCTL_NODE_PASSWORD_FILE=/etc/secrets/postgres-password
-    PG_AUTOCTL_REPLICATION_PASSWORD_FILE=/etc/secrets/replicator-password
-
-    # SSL settings
-    PG_AUTOCTL_SSL_SELF_SIGNED=true
-    PG_AUTOCTL_SSL_MODE=require
-
-    # Failover settings
-    PG_AUTOCTL_CANDIDATE_PRIORITY=50    # Default priority for failover candidates
-    PG_AUTOCTL_REPLICATION_QUORUM=true  # Enable synchronous replication quorum
-
-  # Node-specific environment variables
-  node-env.conf: |
-    # Timeout settings
-    PG_AUTOCTL_NODE_TIMEOUT=30
-    PG_AUTOCTL_FORMATION_TIMEOUT=60
-
-    # Health check settings
-    PG_AUTOCTL_HEALTH_CHECK_MAX_RETRIES=3
-    PG_AUTOCTL_HEALTH_CHECK_RETRY_DELAY=2
-
-    # Replication settings
-    PG_AUTOCTL_SYNCHRONOUS_STANDBY_NAMES_POLICY=first
-
-  # Initialization script for nodes
   init-node.sh: |
     #!/bin/bash
     set -e
 
     NODE_NAME=$(hostname)
-    NODE_ROLE=""
+    export MONITOR_URI="postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:6001/pg_auto_failover"
 
-    # Determine node role based on hostname
     case $NODE_NAME in
       *-0)
-        NODE_ROLE="master"
         PRIORITY=100
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/master
+        export PGPORT=6002
+        export PGUSER=postgres
         ;;
       *-1)
-        NODE_ROLE="sync-replica"
         PRIORITY=90
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/syncreplica
+        export PGPORT=6003
+        export PGUSER=postgres
         ;;
-      *-2|*-3)
-        NODE_ROLE="async-replica"
+      *-2)
         PRIORITY=80
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
+        export PGPORT=6004
+        export PGUSER=postgres
+        ;;
+      *-3)
+        PRIORITY=70
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica2
+        export PGPORT=6005
+        export PGUSER=postgres
         ;;
       *)
-        NODE_ROLE="async-replica"
-        PRIORITY=70
+        PRIORITY=60
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/replica
+        export PGPORT=6006
+        export PGUSER=postgres
         ;;
     esac
 
-    echo "Initializing node $NODE_NAME as $NODE_ROLE with priority $PRIORITY"
+    MY_IP=$(hostname -i)
 
-    # Export environment variables
-    export PGDATA=/var/lib/postgresql/data
-    export PGPORT=5432
-    export PGUSER=postgres
-    export PGPASSWORD=$(cat /etc/secrets/postgres-password)
+    pg_autoctl create postgres \
+      --hostname "${NODE_NAME}.postgres-nodes.db.svc.cluster.local" \
+      --monitor "$MONITOR_URI" \
+      --pgport "$PGPORT" \
+      --auth trust \
+      --ssl-self-signed \
+      --pgdata "$PGDATA"
 
-    # Wait for monitor to be available
-    echo "Waiting for monitor to be ready..."
-    until pg_isready -h postgres-monitor.db.svc.cluster.local -p 5432 -U autoctl_node; do
-      echo "Monitor not ready, waiting..."
-      sleep 5
-    done
-    echo "Connected to the master node"
+    # Post-process postgresql.conf and pg_hba.conf to fix listen & access
+    echo "listen_addresses = '*'" >> "$PGDATA/postgresql.conf"
+    echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
 
-    # Initialize pg_auto_failover node
-    if [ ! -f "$PGDATA/PG_VERSION" ]; then
-      echo "Creating pg_auto_failover node with role: $NODE_ROLE \n\n\n"
+    cat >> "$PGDATA/pg_hba.conf" <<EOF
+    hostssl all pgautofailover_replicator 0.0.0.0/0 trust
+    hostssl replication pgautofailover_replicator 0.0.0.0/0 trust
+    EOF
+    echo "Pg_autoctl initialization for master node completed"
+    echo "Setup completed"
 
-      pg_autoctl create postgres \
-        --monitor postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover \
-        --auth trust \
-        --ssl-self-signed \
-        --pgdata $PGDATA \
-        --pgport $PGPORT \
-        --listen 0.0.0.0 \
-        --hostname ${NODE_NAME}.postgres-nodes.db.svc.cluster.local \
-        --name $NODE_NAME \
-        --candidate-priority $PRIORITY
+  start-node.sh: |
+    #!/bin/bash
+    set -e
+    NODE_NAME=$(hostname)
+    export MONITOR_URI="postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:6001/pg_auto_failover"
 
-      echo "Master node in posgres created \n\n\n"
+    case $NODE_NAME in
+      *-0)
+        PRIORITY=100
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/master
+        export PGPORT=6002
+        export PGUSER=postgres
+        ;;
+      *-1)
+        PRIORITY=90
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/syncreplica
+        export PGPORT=6003
+        export PGUSER=postgres
+        # Removed the problematic sleep command
+        ;;
+      *-2)
+        PRIORITY=80
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
+        export PGPORT=6004
+        export PGUSER=postgres
+        ;;
+      *-3)
+        PRIORITY=70
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica2
+        export PGPORT=6005
+        export PGUSER=postgres
+        ;;
+      *)
+        PRIORITY=60
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/replica
+        export PGPORT=6006
+        export PGUSER=postgres
+        ;;
+    esac
 
-      # Configure users and passwords
-      pg_ctl -D $PGDATA -l /tmp/pg.log start
-      sleep 5
+    # Add replication entry to pg_hba.conf
 
-      echo "Master node users and password done\n\n\n"
-
-      # Set up users
-      # Set the postgres password
-      psql -d postgres -c "ALTER USER postgres PASSWORD '$(cat /etc/secrets/postgres-password)';"
-
-      # Create replicator user if it does not exist
-      psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='replicator'" | grep -q 1 || \
-      psql -d postgres -c "CREATE USER replicator REPLICATION LOGIN PASSWORD '$(cat /etc/secrets/replicator-password)';"
-
-      # Create appuser if it does not exist
-      psql -d postgres -tAc "SELECT 1 FROM pg_roles WHERE rolname='appuser'" | grep -q 1 || \
-      psql -d postgres -c "CREATE USER appuser LOGIN PASSWORD '$(cat /etc/secrets/app-password)';"
-
-      # Create mydb database if it does not exist
-      psql -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='mydb'" | grep -q 1 || \
-      psql -d postgres -c "CREATE DATABASE mydb OWNER appuser;"
-
-      pg_ctl -D $PGDATA stop
-
-      if [ -f /etc/config/postgresql.conf ]; then
-        echo "Copying postgresql.conf..."
-        cp /etc/config/postgresql.conf $PGDATA/
-      fi
-
-      if [ -f /etc/config/pg_hba.conf ]; then
-        echo "Copying pg_hba.conf..."
-        cp /etc/config/pg_hba.conf $PGDATA/
-      fi
-      chown -R postgres:postgres $PGDATA
-      chmod 700 $PGDATA
-
-      echo "Node initialization completed"
-    else
-      echo "Node already initialized"
-    fi
+    # Start pg_autoctl
+    echo "Starting pg_autoctl for $NODE_NAME on port $PGPORT"
+    pg_autoctl run --pgdata "$PGDATA"

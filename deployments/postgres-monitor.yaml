@@ -1,0 +1,100 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: postgres-monitor
+  namespace: db
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: postgres-monitor
+  template:
+    metadata:
+      labels:
+        app: postgres-monitor
+    spec:
+      securityContext:
+        fsGroup: 101
+        runAsUser: 101
+        runAsGroup: 101
+      initContainers:
+        - name: init-db
+          image: citusdata/pg_auto_failover:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              #!/bin/bash
+              set -eux
+
+              export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+              export PGDATA=/var/lib/postgresql/pgdata/monitor
+              export PGPORT=6001
+              export PGUSER=postgres
+
+              mkdir -p $PGDATA
+
+              MY_IP=$(hostname -i)
+
+              pg_autoctl create monitor \
+                --hostname "$MY_IP" \
+                --pgport "$PGPORT" \
+                --auth trust \
+                --ssl-self-signed \
+                --pgdata "$PGDATA"
+              echo "Initialization complete"
+          securityContext:
+            runAsUser: 101
+            runAsGroup: 101
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql
+      containers:
+        - name: postgres-monitor
+          image: citusdata/pg_auto_failover:latest
+          command: ["/bin/bash", "-c"]
+          args:
+            - |
+              #!/bin/bash
+              pg_autoctl run
+          securityContext:
+            runAsUser: 101
+            runAsGroup: 101
+          ports:
+            - containerPort: 6001
+              name: postgres
+          env:
+            - name: PGDATA
+              value: /var/lib/postgresql/pgdata/monitor
+            - name: PGPORT
+              value: "6001"
+            - name: PGUSER
+              value: postgres
+            - name: PATH
+              value: "/usr/lib/postgresql/11/bin:/usr/local/bin:/usr/bin:/bin"
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/
+          readinessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+                  pg_isready -h localhost -p 6001 -U postgres
+            initialDelaySeconds: 10
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command:
+                - /bin/bash
+                - -c
+                - |
+                  export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+                  pg_isready -h localhost -p 6001 -U postgres
+            initialDelaySeconds: 30
+            periodSeconds: 10
+      volumes:
+        - name: pgdata
+          persistentVolumeClaim:
+            claimName: postgres-monitor-pvc
