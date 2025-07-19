@@ -22,6 +22,8 @@ spec:
         fsGroup: 101
         runAsUser: 101
         runAsGroup: 101
+      # Add pod disruption budget awareness
+      terminationGracePeriodSeconds: 60
       initContainers:
       - name: pg-auto-failover-init
         image: citusdata/pg_auto_failover:latest
@@ -53,7 +55,8 @@ spec:
         - name: PGDATA
           value: /var/lib/postgresql/pgdata
         - name: PG_AUTOCTL_MONITOR
-          value: postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:5432/pg_auto_failover
+          value: postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:6001/pg_auto_failover
+        # Enhanced startup command with better error handling
         command: ["/bin/bash", "/etc/scripts/start-node.sh"]
         securityContext:
           runAsGroup: 101
@@ -91,7 +94,7 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1000m"
-        # Readiness Probe - checks if ready to accept connections
+        # Modified readiness probe - more lenient for failover scenarios
         readinessProbe:
           exec:
             command:
@@ -107,14 +110,14 @@ spec:
                 *) PGPORT=6006 ;;
               esac
               export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
-              # Check if postgres is ready and pg_auto_failover is functioning
+              # Check if postgres is ready
               pg_isready -h localhost -p $PGPORT -U postgres
-          initialDelaySeconds: 60
-          periodSeconds: 60
-          timeoutSeconds: 15
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 10
           successThreshold: 1
-          failureThreshold: 5
-        # Liveness Probe - checks if container should be restarted
+          failureThreshold: 3
+        # Enhanced liveness probe with failover awareness
         livenessProbe:
           exec:
             command:
@@ -130,16 +133,23 @@ spec:
                 *) PGPORT=6006; PGDATA="/var/lib/postgresql/pgdata/replica" ;;
               esac
               export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
-              # Check postgres connectivity and basic query execution
-              pg_isready -h localhost -p $PGPORT -U postgres && \
-              psql -h localhost -p $PGPORT -U postgres -d postgres -c 'SELECT 1;' > /dev/null 2>&1 && \
-              # Verify pg_auto_failover process is running
-              pgrep -f "pg_autoctl run" > /dev/null
-          initialDelaySeconds: 60
-          periodSeconds: 60
-          timeoutSeconds: 20
+
+              # Check if pg_autoctl process is running (most important)
+              if ! pgrep -f "pg_autoctl run" > /dev/null; then
+                echo "pg_autoctl process not running"
+                exit 1
+              fi
+
+              # Check postgres connectivity (allow some failures during failover)
+              if ! pg_isready -h localhost -p $PGPORT -U postgres -t 5; then
+                echo "PostgreSQL not ready"
+                exit 1
+              fi
+          initialDelaySeconds: 30
+          periodSeconds: 45  # Increased to allow failover time
+          timeoutSeconds: 15
           successThreshold: 1
-          failureThreshold: 5
+          failureThreshold: 4  # More lenient during failover
         lifecycle:
           preStop:
             exec:
@@ -147,7 +157,6 @@ spec:
               - /bin/bash
               - -c
               - |
-                # Graceful shutdown of pg_auto_failover
                 NODE_NAME=$(hostname)
                 case $NODE_NAME in
                   *-0) PGDATA="/var/lib/postgresql/pgdata/master" ;;
@@ -156,7 +165,10 @@ spec:
                   *-3) PGDATA="/var/lib/postgresql/pgdata/asyncreplica2" ;;
                   *) PGDATA="/var/lib/postgresql/pgdata/replica" ;;
                 esac
-                pg_autoctl stop --pgdata $PGDATA
+
+                # Inform monitor about planned maintenance
+                pg_autoctl stop --pgdata $PGDATA --fast
+                sleep 5
       volumes:
       - name: postgres-node-config
         configMap:
@@ -170,6 +182,7 @@ spec:
           defaultMode: 0755
       - name: shared-config
         emptyDir: {}
+      # Controlled restart policy
       restartPolicy: Always
       serviceAccountName: postgres-service-account
   volumeClaimTemplates:

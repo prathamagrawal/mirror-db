@@ -1,17 +1,14 @@
+# Service for accessing the current primary
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres
+  name: postgres-primary
   namespace: db
-  labels:
-    app: db
 spec:
   selector:
     app: postgres-nodes
-    role: primary  # This will be managed by pg_auto_failover
   ports:
-    - name: postgres
-      port: 5432
-      targetPort: 5432
-      protocol: TCP
+  - name: postgres
+    port: 5432
+    targetPort: 6002  # Will need dynamic update based on current primary
   type: ClusterIP
