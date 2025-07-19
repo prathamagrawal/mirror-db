@@ -60,50 +60,64 @@ data:
       --ssl-self-signed \
       --pgdata "$PGDATA"
 
+    # Post-process postgresql.conf and pg_hba.conf to fix listen & access
+    echo "listen_addresses = '*'" >> "$PGDATA/postgresql.conf"
+    echo "port = $PGPORT" >> "$PGDATA/postgresql.conf"
+
+    cat >> "$PGDATA/pg_hba.conf" <<EOF
+    hostssl all pgautofailover_replicator 0.0.0.0/0 trust
+    hostssl replication pgautofailover_replicator 0.0.0.0/0 trust
+    EOF
     echo "Pg_autoctl initialization for master node completed"
     echo "Setup completed"
 
   start-node.sh: |
-      #!/bin/bash
-      set -e
+    #!/bin/bash
+    set -e
+    NODE_NAME=$(hostname)
+    export MONITOR_URI="postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:6001/pg_auto_failover"
 
-      NODE_NAME=$(hostname)
-      export MONITOR_URI="postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:6001/pg_auto_failover"
-      case $NODE_NAME in
-        *-0)
-          PRIORITY=100
-          mkdir -p /var/lib/postgresql/pgdata
-          export PGDATA=/var/lib/postgresql/pgdata/master
-          export PGPORT=6002
-          export PGUSER=postgres
-          ;;
-        *-1)
-          PRIORITY=90
-          mkdir -p /var/lib/postgresql/pgdata
-          export PGDATA=/var/lib/postgresql/pgdata/syncreplica
-          export PGPORT=6003
-          export PGUSER=postgres
-          ;;
-        *-2)
-          PRIORITY=80
-          mkdir -p /var/lib/postgresql/pgdata
-          export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
-          export PGPORT=6004
-          export PGUSER=postgres
-          ;;
-        *-3)
-          PRIORITY=70
-          mkdir -p /var/lib/postgresql/pgdata
-          export PGDATA=/var/lib/postgresql/pgdata/asyncreplica2
-          export PGPORT=6005
-          export PGUSER=postgres
-          ;;
-        *)
-          PRIORITY=60
-          mkdir -p /var/lib/postgresql/pgdata
-          export PGDATA=/var/lib/postgresql/pgdata/replica
-          export PGPORT=6006
-          export PGUSER=postgres
-          ;;
-        esac
-        pg_autoctl run --pgdata "$PGDATA"
+    case $NODE_NAME in
+      *-0)
+        PRIORITY=100
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/master
+        export PGPORT=6002
+        export PGUSER=postgres
+        ;;
+      *-1)
+        PRIORITY=90
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/syncreplica
+        export PGPORT=6003
+        export PGUSER=postgres
+        # Removed the problematic sleep command
+        ;;
+      *-2)
+        PRIORITY=80
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
+        export PGPORT=6004
+        export PGUSER=postgres
+        ;;
+      *-3)
+        PRIORITY=70
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica2
+        export PGPORT=6005
+        export PGUSER=postgres
+        ;;
+      *)
+        PRIORITY=60
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/replica
+        export PGPORT=6006
+        export PGUSER=postgres
+        ;;
+    esac
+
+    # Add replication entry to pg_hba.conf
+
+    # Start pg_autoctl
+    echo "Starting pg_autoctl for $NODE_NAME on port $PGPORT"
+    pg_autoctl run --pgdata "$PGDATA"

@@ -25,40 +25,29 @@ spec:
             - |
               #!/bin/bash
               set -eux
-              
-              # Set PATH to include PostgreSQL binaries
+
               export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
-              
-              # Create data directory with proper permissions
-              mkdir -p /var/lib/postgresql/pgdata
-              
-              # Set PostgreSQL environment variables
               export PGDATA=/var/lib/postgresql/pgdata/monitor
               export PGPORT=6001
               export PGUSER=postgres
-              
-              # Get container IP
+
+              mkdir -p $PGDATA
+
               MY_IP=$(hostname -i)
-              
-              # Initialize the monitor
+
               pg_autoctl create monitor \
                 --hostname "$MY_IP" \
                 --pgport "$PGPORT" \
                 --auth trust \
                 --ssl-self-signed \
                 --pgdata "$PGDATA"
-
-              echo "Pg_autoctl initialization complete"
+              echo "Initialization complete"
           securityContext:
             runAsUser: 101
             runAsGroup: 101
           volumeMounts:
             - name: pgdata
               mountPath: /var/lib/postgresql
-      volumes:
-        - name: pgdata
-          persistentVolumeClaim:
-            claimName: postgres-monitor-pvc
       containers:
         - name: postgres-monitor
           image: citusdata/pg_auto_failover:latest
@@ -85,7 +74,6 @@ spec:
           volumeMounts:
             - name: pgdata
               mountPath: /var/lib/postgresql/
-          # Add readiness and liveness probes
           readinessProbe:
             exec:
               command:
