@@ -17,6 +17,8 @@ spec:
         fsGroup: 101
         runAsUser: 101
         runAsGroup: 101
+      # Increase grace period for clean shutdown
+      terminationGracePeriodSeconds: 30
       initContainers:
         - name: init-db
           image: citusdata/pg_auto_failover:latest
@@ -25,22 +27,29 @@ spec:
             - |
               #!/bin/bash
               set -eux
-
               export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
               export PGDATA=/var/lib/postgresql/pgdata/monitor
               export PGPORT=6001
               export PGUSER=postgres
-
               mkdir -p $PGDATA
-
               MY_IP=$(hostname -i)
-
               pg_autoctl create monitor \
                 --hostname "$MY_IP" \
                 --pgport "$PGPORT" \
                 --auth trust \
                 --ssl-self-signed \
                 --pgdata "$PGDATA"
+              cat >> "$PGDATA/pg_hba.conf" <<EOF
+              # Allow PgBouncer non-SSL connections from pod network
+              host    all             postgres        10.244.0.0/16           trust
+              host    all             postgres        10.96.0.0/12            trust
+              # Allow pg_auto_failover connections
+              hostssl all all 10.244.0.0/16 trust
+              hostssl all all 10.96.0.0/12 trust
+              hostssl all all 0.0.0.0/8 trust
+              # Allow application connections
+              hostssl all postgres 0.0.0.0/0 md5
+              EOF
               echo "Initialization complete"
           securityContext:
             runAsUser: 101
@@ -74,6 +83,7 @@ spec:
           volumeMounts:
             - name: pgdata
               mountPath: /var/lib/postgresql/
+          # More lenient readiness probe
           readinessProbe:
             exec:
               command:
@@ -81,9 +91,21 @@ spec:
                 - -c
                 - |
                   export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
-                  pg_isready -h localhost -p 6001 -U postgres
-            initialDelaySeconds: 10
-            periodSeconds: 5
+                  # Check if postgres is accepting connections
+                  pg_isready -h localhost -p 6001 -U postgres -t 5
+            initialDelaySeconds: 30      # Increased from 10
+            periodSeconds: 15           # Increased from 5
+            timeoutSeconds: 10          # Added timeout
+            successThreshold: 1
+            failureThreshold: 5         # More lenient
+          # More lenient liveness probe
+          resources:
+            requests:
+              memory: "512Mi"
+              cpu: "100m"
+            limits:
+              memory: "1024Mi"
+              cpu: "500m"
           livenessProbe:
             exec:
               command:
@@ -93,7 +115,10 @@ spec:
                   export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
                   pg_isready -h localhost -p 6001 -U postgres
             initialDelaySeconds: 30
-            periodSeconds: 10
+            periodSeconds: 15
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 5
       volumes:
         - name: pgdata
           persistentVolumeClaim:

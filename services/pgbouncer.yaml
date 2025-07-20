@@ -1,0 +1,16 @@
+# Service for dedicated PgBouncer
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer-service
+  namespace: db
+  labels:
+    app: pgbouncer
+spec:
+  selector:
+    app: pgbouncer
+  ports:
+  - name: pgbouncer
+    port: 6432
+    targetPort: 6432
+  type: ClusterIP

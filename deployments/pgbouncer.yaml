@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer
+  namespace: db
+  labels:
+    app: pgbouncer
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: pgbouncer
+  template:
+    metadata:
+      labels:
+        app: pgbouncer
+    spec:
+      initContainers:
+      - name: config-init
+        image: busybox:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Copy config files to writable location
+          cp /etc/pgbouncer-ro/* /etc/pgbouncer/
+          chmod 644 /etc/pgbouncer/*
+        volumeMounts:
+        - name: pgbouncer-config-ro
+          mountPath: /etc/pgbouncer-ro
+          readOnly: true
+        - name: pgbouncer-config-rw
+          mountPath: /etc/pgbouncer
+      containers:
+      - name: pgbouncer
+        image: pgbouncer/pgbouncer:latest
+        ports:
+        - containerPort: 6432
+          name: pgbouncer
+        env:
+        - name: DATABASES_HOST
+          value: "postgres-monitor.db.svc.cluster.local"
+        - name: DATABASES_PORT
+          value: "6001"
+        - name: DATABASES_USER
+          value: "postgres"
+        - name: DATABASES_DBNAME
+          value: "postgres"
+        - name: POOL_MODE
+          value: "transaction"
+        - name: DEFAULT_POOL_SIZE
+          value: "10"
+        - name: MAX_CLIENT_CONN
+          value: "100"
+        volumeMounts:
+        - name: pgbouncer-config-rw
+          mountPath: /etc/pgbouncer
+        - name: postgres-secrets
+          mountPath: /etc/secrets
+          readOnly: true
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Update config with runtime values
+          sed -i "s/DATABASES_HOST/${DATABASES_HOST}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_PORT/${DATABASES_PORT}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_USER/${DATABASES_USER}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_DBNAME/${DATABASES_DBNAME}/g" /etc/pgbouncer/pgbouncer.ini
+
+          # Start PgBouncer
+          exec /opt/pgbouncer/entrypoint.sh /etc/pgbouncer/pgbouncer.ini
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "50m"
+          limits:
+            memory: "256Mi"
+            cpu: "500m"
+        readinessProbe:
+          tcpSocket:
+            port: 6432
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: 6432
+          initialDelaySeconds: 10
+          periodSeconds: 30
+      volumes:
+      - name: pgbouncer-config-ro
+        configMap:
+          name: pgbouncer-config
+      - name: pgbouncer-config-rw
+        emptyDir: {}
+      - name: postgres-secrets
+        secret:
+          secretName: postgres-creds

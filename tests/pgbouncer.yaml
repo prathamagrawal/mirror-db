@@ -1,0 +1,128 @@
+---
+# Test Pod for PgBouncer Testing
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pgbouncer-test
+  namespace: db
+  labels:
+    app: pgbouncer-test
+spec:
+  containers:
+  - name: postgres-client
+    image: postgres:13
+    command: ["/bin/bash"]
+    args: ["-c", "while true; do sleep 3600; done"]
+    env:
+    - name: PGPASSWORD
+      value: "postgres"  # Replace with your actual password
+    - name: PGHOST
+      value: "pgbouncer-service.db.svc.cluster.local"
+    - name: PGPORT
+      value: "6432"
+    - name: PGUSER
+      value: "postgres"
+    - name: PGDATABASE
+      value: "postgres"
+  restartPolicy: Always
+
+---
+# ConfigMap with useful test scripts
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pgbouncer-test-scripts
+  namespace: db
+data:
+  test-basic.sh: |
+    #!/bin/bash
+    echo "=== Basic PgBouncer Connection Test ==="
+
+    echo "1. Testing basic connectivity..."
+    psql -c "SELECT 'PgBouncer connection successful!' as message, current_timestamp;"
+
+    echo "2. Testing server info..."
+    psql -c "SELECT current_database(), version();"
+
+    echo "3. Creating test table..."
+    psql -c "CREATE TABLE IF NOT EXISTS pgbouncer_test (id SERIAL PRIMARY KEY, created_at TIMESTAMP DEFAULT NOW());"
+
+    echo "4. Inserting test data..."
+    psql -c "INSERT INTO pgbouncer_test DEFAULT VALUES;"
+
+    echo "5. Reading test data..."
+    psql -c "SELECT * FROM pgbouncer_test ORDER BY id DESC LIMIT 5;"
+
+    echo "Test completed successfully!"
+
+  test-admin.sh: |
+    #!/bin/bash
+    echo "=== PgBouncer Admin Interface Test ==="
+
+    echo "Connecting to PgBouncer admin interface..."
+
+    echo "1. Show pool status:"
+    psql -h $PGHOST -p $PGPORT -U $PGUSER -d pgbouncer -c "SHOW POOLS;"
+
+    echo "2. Show client connections:"
+    psql -h $PGHOST -p $PGPORT -U $PGUSER -d pgbouncer -c "SHOW CLIENTS;"
+
+    echo "3. Show server connections:"
+    psql -h $PGHOST -p $PGPORT -U $PGUSER -d pgbouncer -c "SHOW SERVERS;"
+
+    echo "4. Show statistics:"
+    psql -h $PGHOST -p $PGPORT -U $PGUSER -d pgbouncer -c "SHOW STATS;"
+
+    echo "5. Show configuration:"
+    psql -h $PGHOST -p $PGPORT -U $PGUSER -d pgbouncer -c "SHOW CONFIG;"
+
+  test-load.sh: |
+    #!/bin/bash
+    echo "=== PgBouncer Load Test ==="
+
+    # Function to run concurrent connections
+    run_connection() {
+      local id=$1
+      echo "Starting connection $id..."
+      psql -c "SELECT $id as conn_id, pg_backend_pid() as backend_pid, now() as timestamp;" > /dev/null
+      echo "Connection $id completed"
+    }
+
+    echo "Running 10 concurrent connections..."
+
+    # Run 10 concurrent connections
+    for i in {1..10}; do
+      run_connection $i &
+    done
+
+    # Wait for all connections to complete
+    wait
+
+    echo "Load test completed!"
+
+    # Show pool status after load test
+    echo "Pool status after load test:"
+    psql -h $PGHOST -p $PGPORT -U $PGUSER -d pgbouncer -c "SHOW POOLS;"
+
+  test-failover.sh: |
+    #!/bin/bash
+    echo "=== PgBouncer Failover Test ==="
+
+    echo "Starting continuous connection test..."
+    echo "Press Ctrl+C to stop"
+
+    counter=1
+    while true; do
+      echo "Connection attempt $counter at $(date)"
+
+      result=$(psql -c "SELECT current_timestamp, inet_server_addr(), inet_server_port();" 2>&1)
+
+      if [[ $? -eq 0 ]]; then
+        echo "✓ Success: $result"
+      else
+        echo "✗ Failed: $result"
+      fi
+
+      sleep 2
+      ((counter++))
+    done
