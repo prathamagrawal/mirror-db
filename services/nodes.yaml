@@ -1,13 +1,17 @@
-# Service for read replicas
+# Service to expose the PostgreSQL nodes
 apiVersion: v1
 kind: Service
 metadata:
-  name: postgres-replicas
+  name: postgres-nodes
   namespace: db
-spec:
-  selector:
+  labels:
     app: postgres-nodes
+spec:
+  clusterIP: None  # Headless service for StatefulSet
   ports:
+  - name: postgres-0
+    port: 6002
+    targetPort: 6002
   - name: postgres-1
     port: 6003
     targetPort: 6003
@@ -17,4 +21,5 @@ spec:
   - name: postgres-3
     port: 6005
     targetPort: 6005
-  type: ClusterIP
+  selector:
+    app: postgres-nodes
