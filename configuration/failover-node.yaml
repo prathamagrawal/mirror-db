@@ -15,32 +15,38 @@ data:
       *-0)
         mkdir -p /var/lib/postgresql/pgdata
         export PGDATA=/var/lib/postgresql/pgdata/master
-        export PGPORT=6002
         export PGUSER=postgres
+        export PRIORITY=50
+        export NODE_ROLE="primary"
+        export REPLICATION=sync
         ;;
       *-1)
         mkdir -p /var/lib/postgresql/pgdata
         export PGDATA=/var/lib/postgresql/pgdata/syncreplica
-        export PGPORT=6003
-        export PGUSER=postgres
+        export PRIORITY=50
+        export NODE_ROLE="secondary"
+        export REPLICATION=async
         ;;
       *-2)
         mkdir -p /var/lib/postgresql/pgdata
         export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
-        export PGPORT=6004
         export PGUSER=postgres
+        export NODE_ROLE="secondary"
+        export REPLICATION=async
         ;;
       *-3)
         mkdir -p /var/lib/postgresql/pgdata
-        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica2
-        export PGPORT=6005
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
         export PGUSER=postgres
+        export NODE_ROLE="secondary"
+        export REPLICATION=async
         ;;
       *)
         mkdir -p /var/lib/postgresql/pgdata
         export PGDATA=/var/lib/postgresql/pgdata/replica
-        export PGPORT=6006
         export PGUSER=postgres
+        export NODE_ROLE="secondary"
+        export REPLICATION=async
         ;;
     esac
 
@@ -57,43 +63,71 @@ data:
     pg_autoctl create postgres \
       --hostname "$MY_HOSTNAME" \
       --monitor "$MONITOR_URI" \
-      --pgport "$PGPORT" \
       --auth trust \
       --ssl-self-signed \
       --pgdata "$PGDATA" \
 
     # Enhanced PostgreSQL configuration
     cat >> "$PGDATA/postgresql.conf" <<EOF
+    # Network settings
     listen_addresses = '*'
-    port = $PGPORT
+    port = 5432
+    
     # Enhanced replication settings
     max_wal_senders = 10
     max_replication_slots = 10
+    wal_keep_segments = 64
+    
     # Failover tuning
     wal_level = replica
     hot_standby = on
     hot_standby_feedback = on
+    
     # Performance tuning
     shared_buffers = 128MB
     effective_cache_size = 512MB
     checkpoint_completion_target = 0.9
+    wal_buffers = 16MB
+    
+    # Connection settings
+    max_connections = 100
+    
     # Logging for debugging
     log_destination = 'stderr'
     logging_collector = on
     log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
     log_min_duration_statement = 1000
+    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
+    log_connections = on
+    log_disconnections = on
+    
+    # Auto-failover specific settings
+    synchronous_standby_names = '*'
+    
     EOF
-
+    
     # Enhanced pg_hba.conf
-      cat >> "$PGDATA/pg_hba.conf" <<EOF
+    cat >> "$PGDATA/pg_hba.conf" <<EOF
     # Allow pg_auto_failover connections
     hostssl all pgautofailover_replicator 0.0.0.0/0 trust
     hostssl replication pgautofailover_replicator 0.0.0.0/0 trust
     hostssl all autoctl_node 0.0.0.0/0 trust
+    hostssl replication autoctl_node 0.0.0.0/0 trust
+    
     # Allow application connections
-    hostssl all postgres 0.0.0.0/0 md5
+    hostssl all postgres 0.0.0.0/0 trust
+    host all postgres 0.0.0.0/0 trust
+    
+    # Local connections
+    local all all trust
+    host all all 127.0.0.1/32 trust
+    host all all ::1/128 trust
+    
+    # Cluster internal connections
+    hostssl all all 10.0.0.0/8 trust
+    hostssl replication all 10.0.0.0/8 trust
     EOF
-
+    
     echo "Node initialization completed for $NODE_NAME"
 
   start-node.sh: |
@@ -106,23 +140,18 @@ data:
     case $NODE_NAME in
       *-0)
         export PGDATA=/var/lib/postgresql/pgdata/master
-        export PGPORT=6002
         ;;
       *-1)
         export PGDATA=/var/lib/postgresql/pgdata/syncreplica
-        export PGPORT=6003
         ;;
       *-2)
         export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
-        export PGPORT=6004
         ;;
       *-3)
-        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica2
-        export PGPORT=6005
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
         ;;
       *)
         export PGDATA=/var/lib/postgresql/pgdata/replica
-        export PGPORT=6006
         ;;
     esac
 
@@ -140,7 +169,7 @@ data:
     trap 'shutdown_handler' SIGTERM SIGINT
 
 
-    echo "Starting pg_autoctl for $NODE_NAME on port $PGPORT"
+    echo "Starting pg_autoctl for $NODE_NAME"
     echo "PGDATA: $PGDATA"
     echo "Monitor URI: $MONITOR_URI"
 

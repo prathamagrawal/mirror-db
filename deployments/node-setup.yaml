@@ -25,7 +25,7 @@ spec:
       # Add pod disruption budget awareness
       terminationGracePeriodSeconds: 60
       initContainers:
-      - name: pg-auto-failover-init
+      - name: initdb
         image: citusdata/pg_auto_failover:latest
         command: ["/bin/bash", "/etc/scripts/init-node.sh"]
         securityContext:
@@ -62,14 +62,8 @@ spec:
           runAsGroup: 101
           runAsUser: 101
         ports:
-        - containerPort: 6002
-          name: postgres-0
-        - containerPort: 6003
-          name: postgres-1
-        - containerPort: 6004
-          name: postgres-2
-        - containerPort: 6005
-          name: postgres-3
+        - containerPort: 5432
+          name: postgres
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql
@@ -101,17 +95,9 @@ spec:
             - /bin/bash
             - -c
             - |
-              NODE_NAME=$(hostname)
-              case $NODE_NAME in
-                *-0) PGPORT=6002 ;;
-                *-1) PGPORT=6003 ;;
-                *-2) PGPORT=6004 ;;
-                *-3) PGPORT=6005 ;;
-                *) PGPORT=6006 ;;
-              esac
               export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
-              # Check if postgres is ready
-              pg_isready -h localhost -p $PGPORT -U postgres
+              # Check if postgres is ready on standard port 5432
+              pg_isready -h localhost -p 5432 -U postgres
           initialDelaySeconds: 30
           periodSeconds: 30
           timeoutSeconds: 10
@@ -126,11 +112,11 @@ spec:
             - |
               NODE_NAME=$(hostname)
               case $NODE_NAME in
-                *-0) PGPORT=6002; PGDATA="/var/lib/postgresql/pgdata/master" ;;
-                *-1) PGPORT=6003; PGDATA="/var/lib/postgresql/pgdata/syncreplica" ;;
-                *-2) PGPORT=6004; PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
-                *-3) PGPORT=6005; PGDATA="/var/lib/postgresql/pgdata/asyncreplica2" ;;
-                *) PGPORT=6006; PGDATA="/var/lib/postgresql/pgdata/replica" ;;
+                *-0) PGDATA="/var/lib/postgresql/pgdata/master" ;;
+                *-1) PGDATA="/var/lib/postgresql/pgdata/syncreplica" ;;
+                *-2) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
+                *-3) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
+                *) PGDATA="/var/lib/postgresql/pgdata/replica" ;;
               esac
               export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
 
@@ -140,8 +126,8 @@ spec:
                 exit 1
               fi
 
-              # Check postgres connectivity (allow some failures during failover)
-              if ! pg_isready -h localhost -p $PGPORT -U postgres -t 5; then
+              # Check postgres connectivity on standard port 5432
+              if ! pg_isready -h localhost -p 5432 -U postgres -t 5; then
                 echo "PostgreSQL not ready"
                 exit 1
               fi
@@ -162,7 +148,7 @@ spec:
                   *-0) PGDATA="/var/lib/postgresql/pgdata/master" ;;
                   *-1) PGDATA="/var/lib/postgresql/pgdata/syncreplica" ;;
                   *-2) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
-                  *-3) PGDATA="/var/lib/postgresql/pgdata/asyncreplica2" ;;
+                  *-3) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
                   *) PGDATA="/var/lib/postgresql/pgdata/replica" ;;
                 esac
 

@@ -6,13 +6,12 @@ metadata:
 data:
   pgbouncer.ini: |
     [databases]
-    postgres = host=DATABASES_HOST port=DATABASES_PORT dbname=DATABASES_DBNAME user=DATABASES_USER sslmode=require
+    postgres = host=DATABASES_HOST port=DATABASES_PORT dbname=DATABASES_DBNAME user=DATABASES_USER password=DATABASES_PASSWORD sslmode=require
 
     [pgbouncer]
     listen_port = 6432
     listen_addr = *
-    auth_type = trust
-    auth_file = /etc/pgbouncer/userlist.txt
+    auth_type = trust  # Use trust for testing, md5 for production
     admin_users = postgres
     stats_users = postgres
     pool_mode = transaction
@@ -33,4 +32,5 @@ data:
     server_tls_sslmode = require
 
   userlist.txt: |
-    "postgres" ""
+    # For trust authentication, this can be empty
+    # For md5 authentication, add: "postgres" "md5hash"

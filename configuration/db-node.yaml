@@ -97,17 +97,17 @@ data:
     host    replication     all             ::1/128                 trust
 
     # Kubernetes cluster internal network (adjust CIDR for your cluster)
-    host    all             postgres        10.0.0.0/8              md5
-    host    all             appuser         10.0.0.0/8              md5
+    host    all             postgres        10.0.0.0/8              trust
+    host    all             appuser         10.0.0.0/8              trust
     host    all             autoctl_node    10.0.0.0/8              trust
 
     # Replication connections
-    host    replication     replicator      10.0.0.0/8              md5
-    host    replication     postgres        10.0.0.0/8              md5
+    host    replication     replicator      10.0.0.0/8              trust
+    host    replication     postgres        10.0.0.0/8              trust
 
     # Allow connections from anywhere in cluster (adjust as needed for security)
-    host    all             postgres        0.0.0.0/0               md5
-    host    all             appuser         0.0.0.0/0               md5
-    host    replication     replicator      0.0.0.0/0               md5
+    host    all             postgres        0.0.0.0/0               trust
+    host    all             appuser         0.0.0.0/0               trust
+    host    replication     replicator      0.0.0.0/0               trust
 
 ---

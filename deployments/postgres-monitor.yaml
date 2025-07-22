@@ -48,7 +48,7 @@ spec:
               hostssl all all 10.96.0.0/12 trust
               hostssl all all 0.0.0.0/8 trust
               # Allow application connections
-              hostssl all postgres 0.0.0.0/0 md5
+              hostssl all postgres 0.0.0.0/0 trust
               EOF
               echo "Initialization complete"
           securityContext:

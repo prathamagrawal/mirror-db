@@ -39,13 +39,18 @@ spec:
           name: pgbouncer
         env:
         - name: DATABASES_HOST
-          value: "postgres-monitor.db.svc.cluster.local"
+          value: "postgres-nodes.db.svc.cluster.local"
         - name: DATABASES_PORT
-          value: "6001"
+          value: "5432"
         - name: DATABASES_USER
           value: "postgres"
         - name: DATABASES_DBNAME
           value: "postgres"
+        - name: DATABASES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: postgres-creds
+              key: postgres-password 
         - name: POOL_MODE
           value: "transaction"
         - name: DEFAULT_POOL_SIZE
@@ -67,6 +72,7 @@ spec:
           sed -i "s/DATABASES_PORT/${DATABASES_PORT}/g" /etc/pgbouncer/pgbouncer.ini
           sed -i "s/DATABASES_USER/${DATABASES_USER}/g" /etc/pgbouncer/pgbouncer.ini
           sed -i "s/DATABASES_DBNAME/${DATABASES_DBNAME}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_PASSWORD/${DATABASES_PASSWORD}/g" /etc/pgbouncer/pgbouncer.ini  
 
           # Start PgBouncer
           exec /opt/pgbouncer/entrypoint.sh /etc/pgbouncer/pgbouncer.ini
