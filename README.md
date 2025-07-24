@@ -29,37 +29,6 @@ This repository contains a comprehensive PostgreSQL High Availability setup usin
 
 <img src="./static/PostgresNetwork.png" alt="PostgresNetwork"/>
 
-### Enhanced Failover Flow with PgBouncer
-
-```mermaid
-sequenceDiagram
-    participant App as Application
-    participant PgB as PgBouncer
-    participant M as Monitor
-    participant P as Primary
-    participant S as Sync Replica
-    participant A as Async Replica
-
-    Note over App,A: Normal Operation
-    App->>PgB: Connection Request
-    PgB->>P: Pooled Connection (Write)
-    PgB->>S: Pooled Connection (Read)
-    P->>S: Sync Replication
-    P->>A: Async Replication
-    M->>P: Health Check ✅
-
-    Note over App,A: Primary Failure Detected
-    M->>P: Health Check ❌
-    M->>S: Promote to Primary
-    PgB->>PgB: Detect Connection Loss
-    PgB->>S: Reconnect to New Primary
-    S->>A: Async Replication (New Primary)
-
-    Note over App,A: Seamless Service Continuation
-    App->>PgB: New Connection Request
-    PgB->>S: Pooled Connection (New Primary)
-    Note over PgB: Connection pool maintains<br/>application transparency
-```
 
 ## 📋 Prerequisites
 
@@ -78,66 +47,63 @@ Before deploying this cluster, ensure you have:
 ### 1. Clone and Navigate
 
 ```bash
-git clone <repository-url>
-cd postgres-ha-cluster
+git clone https://github.com/prathamagrawal/mirror-db
+cd mirror-db
 ```
 
 ### 2. Deploy Prerequisites
 
 ```bash
 # Create namespace
-kubectl create namespace db
+kubectl create -f namespace.yaml
 
 # Create service account and RBAC
-kubectl apply -f rbac.yaml
+kubectl apply -f service-account.yaml
 
-# Create secrets for PostgreSQL
-kubectl create secret generic postgres-creds \
-  --from-literal=postgres-password=your-secure-password \
-  --namespace=db
+# Create secrets for PostgreSQL Monitor and nodes
+kubectl apply -f configuration/secrets.yaml
 
-# Create secrets for PgBouncer
-kubectl create secret generic pgbouncer-creds \
-  --from-literal=admin-password=bouncer-admin-password \
-  --from-literal=stats-password=bouncer-stats-password \
-  --namespace=db
+# Create configurations for Monitor, Nodes and PgBouncer
+kubectl apply -f configuration/
 ```
 
 ### 3. Deploy Monitor Node
 
 ```bash
+# Deploy the pvc first
+kubectl apply -f pvc/monitor.yaml
+
 # Deploy the monitor first
-kubectl apply -f postgres-monitor.yaml
+kubectl apply -f deployments/postgres-monitor.yaml
 ```
 
-### 4. Deploy PostgreSQL Configuration
+### 4. Deploy Kubernetes Services
 
 ```bash
 # Apply the PostgreSQL ConfigMap
-kubectl apply -f postgres-configmap.yaml
+kubectl apply -f services/
 ```
 
 ### 5. Deploy PostgreSQL Cluster
 
 ```bash
 # Deploy the PostgreSQL StatefulSet
-kubectl apply -f postgres-statefulset.yaml
+kubectl apply -f deployments/node-setup.yaml
 ```
 
 ### 6. Deploy PgBouncer Configuration
 
 ```bash
 # Apply PgBouncer ConfigMap
-kubectl apply -f pgbouncer-configmap.yaml
+kubectl apply -f deployments/pgbouncer.yaml
 ```
 
-### 7. Deploy PgBouncer Layer
+### 7. Deploy PgBouncer Layer to test the connectivity and database 
 
 ```bash
 # Deploy PgBouncer StatefulSet and Service
-kubectl apply -f pgbouncer-statefulset.yaml
-kubectl apply -f pgbouncer-service.yaml
-```
+kubectl apply -f tests/pgbouncer.yaml
+  ```
 
 ### 8. Verify Deployment
 
@@ -173,7 +139,6 @@ kubectl exec -it pgbouncer-0 -n db -- \
 | PgBouncer Instance | Purpose | Pool Mode | Target Nodes | Max Connections |
 |-------------------|---------|-----------|--------------|-----------------|
 | `pgbouncer-0` | Write Pool | Transaction | Primary only | 100 |
-| `pgbouncer-1` | Read Pool | Transaction | All replicas | 200 |
 
 ### Enhanced Resource Allocation
 
@@ -193,10 +158,10 @@ resources:
 resources:
   requests:
     memory: "64Mi"
-    cpu: "100m"
+    cpu: "50m"
   limits:
-    memory: "128Mi"
-    cpu: "200m"
+    memory: "256Mi"
+    cpu: "500m"
 ```
 
 ## 🎯 PgBouncer Integration
@@ -206,27 +171,13 @@ resources:
 ```ini
 # Write Pool (pgbouncer-0)
 [databases]
-writedb = host=postgres-nodes-0.postgres-nodes.db.svc.cluster.local port=5432 dbname=postgres
+writedb = host=postgres-nodes.db.svc.cluster.local port=5432 dbname=postgres
 
 [pgbouncer]
 pool_mode = transaction
 max_client_conn = 100
 default_pool_size = 20
 reserve_pool_size = 5
-auth_type = trust
-```
-
-```ini
-# Read Pool (pgbouncer-1)
-[databases]
-readdb_replica1 = host=postgres-nodes-1.postgres-nodes.db.svc.cluster.local port=5432 dbname=postgres
-readdb_replica2 = host=postgres-nodes-2.postgres-nodes.db.svc.cluster.local port=5432 dbname=postgres
-readdb_replica3 = host=postgres-nodes-3.postgres-nodes.db.svc.cluster.local port=5432 dbname=postgres
-
-[pgbouncer]
-pool_mode = transaction
-max_client_conn = 200
-default_pool_size = 15
 auth_type = trust
 ```
 
@@ -283,7 +234,7 @@ livenessProbe:
 
 ### Application Connection Patterns
 
-#### Write Operations
+#### PGBouncer Operations
 ```python
 # Python example - Write connections
 import psycopg2
@@ -300,22 +251,6 @@ write_conn = psycopg2.connect(
 with write_conn.cursor() as cur:
     cur.execute("INSERT INTO table VALUES (%s, %s)", (value1, value2))
     write_conn.commit()
-```
-
-#### Read Operations
-```python
-# Read connections with load balancing
-read_conn = psycopg2.connect(
-    host="pgbouncer-service.db.svc.cluster.local",
-    port=6433,
-    database="readdb_replica1",  # or readdb_replica2, readdb_replica3
-    user="your_app_user"
-)
-
-# Perform reads
-with read_conn.cursor() as cur:
-    cur.execute("SELECT * FROM table WHERE condition = %s", (filter_val,))
-    results = cur.fetchall()
 ```
 
 ### Viewing Cluster Status
