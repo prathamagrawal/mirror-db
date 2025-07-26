@@ -2,15 +2,33 @@
 apiVersion: v1
 kind: Service
 metadata:
-  name: pgbouncer-service
+  name: pgbouncer-primary-service
   namespace: db
   labels:
-    app: pgbouncer
+    app: pgbouncer-primary-service
 spec:
   selector:
-    app: pgbouncer
+    app: pgbouncer-primary
   ports:
-  - name: pgbouncer
+  - name: pgbouncer-primary
+    port: 6432
+    targetPort: 6432
+  type: ClusterIP
+
+---
+# Service for dedicated PgBouncer
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer-replicas-service
+  namespace: db
+  labels:
+    app: pgbouncer-replicas-service
+spec:
+  selector:
+    app: pgbouncer-replicas
+  ports:
+  - name: pgbouncer-replicas
     port: 6432
     targetPort: 6432
   type: ClusterIP

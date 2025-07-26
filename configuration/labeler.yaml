@@ -1,0 +1,50 @@
+# ConfigMap containing labeling Python script
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: pod-labeler-script
+  namespace: db
+data:
+  labeler.py: |
+    import os
+    import time
+    import psycopg2
+    from kubernetes import client, config
+
+    NAMESPACE = os.environ.get('NAMESPACE', 'db')
+    POD_NAME = os.environ.get('HOSTNAME')
+    print("Calling API NOW: ")
+    def get_role():
+        try:
+            conn = psycopg2.connect(user="postgres", host="localhost", port="5432")
+            cur = conn.cursor()
+            cur.execute("SELECT pg_is_in_recovery()")
+            is_in_recovery = cur.fetchone()[0]
+            cur.close()
+            conn.close()
+            return "replica" if is_in_recovery else "primary"
+        except Exception as e:
+            print("DB connection error:", e)
+            return None
+
+    def patch_label(role):
+        try:
+            config.load_incluster_config()
+            v1 = client.CoreV1Api()
+            body = {"metadata": {"labels": {"pg-role": role}}}
+            v1.patch_namespaced_pod(POD_NAME, NAMESPACE, body)
+            print(f"Patched Pod {POD_NAME} with label pg-role={role}")
+        except Exception as e:
+            print(f"Failed to patch Pod label: {e}")
+
+    def main():
+        current_role = None
+        while True:
+            detected_role = get_role()
+            if detected_role and detected_role != current_role:
+                patch_label(detected_role)
+                current_role = detected_role
+            time.sleep(10)
+
+    if __name__ == "__main__":
+        main()

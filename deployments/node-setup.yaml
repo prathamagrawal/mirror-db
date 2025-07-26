@@ -151,11 +151,33 @@ spec:
                   *-3) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
                   *) PGDATA="/var/lib/postgresql/pgdata/replica" ;;
                 esac
-
-                # Inform monitor about planned maintenance
                 pg_autoctl stop --pgdata $PGDATA --fast
                 sleep 5
+      - name: pod-labeler
+        securityContext:
+          runAsUser: 0
+          runAsGroup: 0
+        image: python:3.11-slim-bullseye
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            pip install --no-cache-dir --upgrade --force-reinstall psycopg2-binary kubernetes && \
+            echo "Pip install succeeded" && \
+            python -u /mnt/labeler.py
+        env:
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+        volumeMounts:
+          - name: labeler-script
+            mountPath: /mnt/labeler.py
+            subPath: labeler.py
+
       volumes:
+      - name: labeler-script
+        configMap:
+          name: pod-labeler-script
       - name: postgres-node-config
         configMap:
           name: postgres-node-config

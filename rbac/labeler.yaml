@@ -1,0 +1,24 @@
+# Role and RoleBinding - allow patching pod labels
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: pod-labeler
+  namespace: db
+rules:
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: pod-labeler-binding
+  namespace: db
+subjects:
+  - kind: ServiceAccount
+    name: postgres-service-account     # Use your Postgres pod's service account here
+    namespace: db
+roleRef:
+  kind: Role
+  name: pod-labeler
+  apiGroup: rbac.authorization.k8s.io

@@ -14,3 +14,36 @@ spec:
     targetPort: 5432
   selector:
     app: postgres-nodes
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary
+  namespace: db
+spec:
+  selector:
+    app: postgres-nodes
+    pg-role: primary
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+  type: ClusterIP
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-replicas
+  namespace: db
+spec:
+  selector:
+    app: postgres-nodes
+    pg-role: replica
+  ports:
+    - port: 5432
+      targetPort: 5432
+      protocol: TCP
+  type: ClusterIP

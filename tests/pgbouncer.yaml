@@ -17,7 +17,7 @@ spec:
     - name: PGPASSWORD
       value: "postgres"  # Replace with your actual password
     - name: PGHOST
-      value: "pgbouncer-service.db.svc.cluster.local"
+      value: "pgbouncer-replicasg-service.db.svc.cluster.local"
     - name: PGPORT
       value: "6432"
     - name: PGUSER
