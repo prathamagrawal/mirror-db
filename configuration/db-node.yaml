@@ -1,4 +1,3 @@
-# ConfigMap for PostgreSQL Data Nodes (Master + Replicas)
 apiVersion: v1
 kind: ConfigMap
 metadata:

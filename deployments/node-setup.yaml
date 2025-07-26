@@ -22,7 +22,6 @@ spec:
         fsGroup: 101
         runAsUser: 101
         runAsGroup: 101
-      # Add pod disruption budget awareness
       terminationGracePeriodSeconds: 60
       initContainers:
       - name: initdb
@@ -56,7 +55,6 @@ spec:
           value: /var/lib/postgresql/pgdata
         - name: PG_AUTOCTL_MONITOR
           value: postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:6001/pg_auto_failover
-        # Enhanced startup command with better error handling
         command: ["/bin/bash", "/etc/scripts/start-node.sh"]
         securityContext:
           runAsGroup: 101
@@ -88,7 +86,6 @@ spec:
           limits:
             memory: "1Gi"
             cpu: "1000m"
-        # Modified readiness probe - more lenient for failover scenarios
         readinessProbe:
           exec:
             command:
@@ -103,7 +100,6 @@ spec:
           timeoutSeconds: 10
           successThreshold: 1
           failureThreshold: 3
-        # Enhanced liveness probe with failover awareness
         livenessProbe:
           exec:
             command:
@@ -132,10 +128,10 @@ spec:
                 exit 1
               fi
           initialDelaySeconds: 30
-          periodSeconds: 45  # Increased to allow failover time
+          periodSeconds: 45
           timeoutSeconds: 15
           successThreshold: 1
-          failureThreshold: 4  # More lenient during failover
+          failureThreshold: 4
         lifecycle:
           preStop:
             exec:
@@ -190,7 +186,6 @@ spec:
           defaultMode: 0755
       - name: shared-config
         emptyDir: {}
-      # Controlled restart policy
       restartPolicy: Always
       serviceAccountName: postgres-service-account
   volumeClaimTemplates:

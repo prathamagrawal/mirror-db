@@ -15,7 +15,7 @@ spec:
     args: ["-c", "while true; do sleep 3600; done"]
     env:
     - name: PGPASSWORD
-      value: "postgres"  # Replace with your actual password
+      value: "postgres"
     - name: PGHOST
       value: "pgbouncer-replicasg-service.db.svc.cluster.local"
     - name: PGPORT
@@ -27,7 +27,6 @@ spec:
   restartPolicy: Always
 
 ---
-# ConfigMap with useful test scripts
 apiVersion: v1
 kind: ConfigMap
 metadata:

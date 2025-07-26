@@ -13,5 +13,5 @@ spec:
       port: 5432
       targetPort: 5432
       protocol: TCP
-  clusterIP: None  # Headless for stable DNS name
+  clusterIP: None 
   type: ClusterIP

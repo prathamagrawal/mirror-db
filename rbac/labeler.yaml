@@ -1,4 +1,3 @@
-# Role and RoleBinding - allow patching pod labels
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -16,7 +15,7 @@ metadata:
   namespace: db
 subjects:
   - kind: ServiceAccount
-    name: postgres-service-account     # Use your Postgres pod's service account here
+    name: postgres-service-account  
     namespace: db
 roleRef:
   kind: Role
