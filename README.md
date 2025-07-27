@@ -28,7 +28,6 @@ This repository contains a comprehensive PostgreSQL High Availability setup usin
 ## 🏗️ Architecture
 
 ### Cluster Topology
-<img src="./static/PostgresNetwork.png" alt="PostgresNetwork"/>
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
@@ -76,6 +75,18 @@ This repository contains a comprehensive PostgreSQL High Availability setup usin
 │                          Streaming Replication                 │
 └─────────────────────────────────────────────────────────────────┘
 ```
+
+### 🏷️ Dynamic Service Discovery
+
+The cluster uses **automatic pod labeling** to enable dynamic service discovery:
+
+<img src="./static/Failover-Labelling-PgBouncer.png" alt="Pod Labeling System" width="800"/>
+
+<img src="./static/Failover-Labelling-PgBouncer-Result.png" alt="Pod Labeling System Results" width="800"/>
+
+- **Pod Labeler**: Python sidecar container that monitors PostgreSQL roles
+- **Dynamic Labels**: Pods get labeled with `pg-role=primary` or `pg-role=replica`
+- **Service Selectors**: Kubernetes services automatically route to correct nodes
 
 ## 📋 Prerequisites
 
@@ -265,17 +276,20 @@ livenessProbe:
   periodSeconds: 30
 ```
 
-### Service Discovery
+### 🔍 Connection Pool Monitoring
 
-The cluster uses **automatic pod labeling** to enable dynamic service discovery:
+<img src="./images/ConnectionPoolingTesting.png" alt="PgBouncer Connection Pooling in Action" width="800"/>
 
-- **Pod Labeler**: Python sidecar container that monitors PostgreSQL roles
-- **Dynamic Labels**: Pods get labeled with `pg-role=primary` or `pg-role=replica`
-- **Service Selectors**: Kubernetes services automatically route to correct nodes
+The image above shows PgBouncer in action with:
+- Real-time connection statistics and pool utilization
+- Connection multiplexing with efficient resource usage
+- Automatic connection management and cleanup
 
 ## 🛠️ Operations Guide
 
 ### Viewing Cluster Status
+
+<img src="./static/FailoverTesting.png" alt="PostgreSQL Cluster Status and Failover Testing" width="800"/>
 
 ```bash
 # PostgreSQL cluster state
@@ -319,6 +333,28 @@ kubectl exec -it postgres-nodes-0 -n db -- \
 kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -d postgres -c "SELECT pg_is_in_recovery();"
 ```
+
+## ✅ Validation and Testing
+
+### Connection Testing
+
+<img src="./static/PoolingResults.png" alt="Connection Testing Script" width="800"/>
+
+The connection testing script demonstrates:
+- Automated connection validation to both primary and replica services
+- Connection pooling efficiency testing
+- Real-time monitoring of connection attempts and success rates
+
+### Read/Write Operations Testing
+
+<img src="./static/Replication.png" alt="Database Operations and Read/Write Testing" width="800"/>
+
+This shows practical database operations including:
+- Replication is working across all nodes using PgBouncer
+- Creating test tables and inserting sample data
+- Validating read/write splitting between primary and replicas
+- Demonstrating that write operations are properly restricted to primary nodes
+- Testing read operations across replica nodes
 
 ## 📊 Performance Benefits
 
