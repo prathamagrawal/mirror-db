@@ -15,20 +15,66 @@ This repository contains a comprehensive PostgreSQL High Availability setup usin
 ### 🌟 Key Features
 
 - **🔄 Automatic Failover**: Sub-minute failover with health monitoring
-- **🎯 Intelligent Connection Pooling**: PgBouncer with failover-aware routing
+- **🎯 Intelligent Connection Pooling**: PgBouncer with separate primary/replica pools
 - **📊 Multi-tier Replication**: Synchronous + Asynchronous replicas
 - **⚖️ Load Balancing**: Smart read/write traffic distribution
 - **🛡️ Zero Data Loss**: Synchronous replication ensures consistency
 - **⚡ Performance Optimized**: Connection pooling + tuned PostgreSQL
 - **🔍 Comprehensive Monitoring**: Health checks and graceful shutdowns
 - **🔐 Security First**: SSL encryption and proper authentication
+- **🏷️ Dynamic Service Discovery**: Automatic pod labeling for service routing
 
 ## 🏗️ Architecture
 
-### Cluster Topology with PgBouncer
-
+### Cluster Topology
 <img src="./static/PostgresNetwork.png" alt="PostgresNetwork"/>
 
+```
+┌─────────────────────────────────────────────────────────────────┐
+│                    Applications Layer                           │
+│  ┌─────────────────┐              ┌─────────────────────────────┐│
+│  │   Write Apps    │              │        Read Apps            ││
+│  │                 │              │                             ││
+│  └─────────────────┘              └─────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+           │                                        │
+           ▼                                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                 PgBouncer Connection Pools                      │
+│  ┌─────────────────┐              ┌─────────────────────────────┐│
+│  │ pgbouncer-primary│              │   pgbouncer-replicas       ││
+│  │   Port: 6432    │              │      Port: 6432            ││
+│  │ Transaction Pool│              │   Transaction Pool          ││
+│  └─────────────────┘              └─────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+           │                                        │
+           ▼                                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│                Kubernetes Services                              │
+│  ┌─────────────────┐              ┌─────────────────────────────┐│
+│  │postgres-primary │              │   postgres-replicas         ││
+│  │ (Label Selector)│              │   (Label Selector)          ││
+│  └─────────────────┘              └─────────────────────────────┘│
+└─────────────────────────────────────────────────────────────────┘
+           │                                        │
+           ▼                                        ▼
+┌─────────────────────────────────────────────────────────────────┐
+│              PostgreSQL Cluster (StatefulSet)                   │
+│                                                                 │
+│  ┌──────────┐  ┌──────────────┐  ┌─────────────────────────────┐│
+│  │ Monitor  │  │   Primary    │  │         Replicas            ││
+│  │(Port 6001│  │postgres-0    │  │  ┌─────────────────────────┐││
+│  │          │  │pg-role:      │  │  │ postgres-1 (Sync)       │││
+│  │Coordinates│  │primary       │  │  │ postgres-2 (Async)      │││
+│  │Failover  │  │              │  │  │ postgres-3 (Async)      │││
+│  │          │  │              │  │  │ pg-role: replica        │││
+│  └──────────┘  └──────────────┘  │  └─────────────────────────┘││
+│                       │          └─────────────────────────────┘│
+│                       │                         ▲               │
+│                       └─────────────────────────┘               │
+│                          Streaming Replication                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## 📋 Prerequisites
 
@@ -59,6 +105,7 @@ kubectl create -f namespace.yaml
 
 # Create service account and RBAC
 kubectl apply -f service-account.yaml
+kubectl apply -f rbac/
 
 # Create secrets for PostgreSQL Monitor and nodes
 kubectl apply -f configuration/secrets.yaml
@@ -67,21 +114,24 @@ kubectl apply -f configuration/secrets.yaml
 kubectl apply -f configuration/
 ```
 
-### 3. Deploy Monitor Node
+### 3. Deploy Storage
 
 ```bash
-# Deploy the pvc first
+# Deploy PVC for monitor
 kubectl apply -f pvc/monitor.yaml
-
-# Deploy the monitor first
-kubectl apply -f deployments/postgres-monitor.yaml
 ```
 
-### 4. Deploy Kubernetes Services
+### 4. Deploy Monitor Node
 
 ```bash
-# Apply the PostgreSQL ConfigMap
-kubectl apply -f services/
+# Deploy the monitor first
+kubectl apply -f deployments/postgres-monitor.yaml
+
+# Deploy the monitor node services
+kubectl apply -f services/monitor.yaml
+
+# Wait for monitor to be ready
+kubectl wait --for=condition=ready pod -l app=postgres-monitor -n db --timeout=300s
 ```
 
 ### 5. Deploy PostgreSQL Cluster
@@ -89,37 +139,37 @@ kubectl apply -f services/
 ```bash
 # Deploy the PostgreSQL StatefulSet
 kubectl apply -f deployments/node-setup.yaml
+
+# Deploy the monitor node services
+kubectl apply -f services/nodes.yaml
+
+# Wait for nodes to be ready
+kubectl wait --for=condition=ready pod -l app=postgres-nodes -n db --timeout=600s
 ```
 
-### 6. Deploy PgBouncer Configuration
+### 6. Deploy PgBouncer
 
 ```bash
-# Apply PgBouncer ConfigMap
+# Deploy PgBouncer pools
 kubectl apply -f deployments/pgbouncer.yaml
+kubectl apply -f services/pgbouncer.yaml
 ```
 
-### 7. Deploy PgBouncer Layer to test the connectivity and database 
-
-```bash
-# Deploy PgBouncer StatefulSet and Service
-kubectl apply -f tests/pgbouncer.yaml
-  ```
-
-### 8. Verify Deployment
+### 7. Verify Deployment
 
 ```bash
 # Check PostgreSQL pods
 kubectl get pods -n db -l app=postgres-nodes
 
 # Check PgBouncer pods
-kubectl get pods -n db -l app=pgbouncer
+kubectl get pods -n db -l app=pgbouncer-primary
 
 # Check cluster status
 kubectl exec -it postgres-nodes-0 -n db -- \
   pg_autoctl show state --pgdata /var/lib/postgresql/pgdata/master
 
 # Check PgBouncer status
-kubectl exec -it pgbouncer-0 -n db -- \
+kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW POOLS;"
 ```
 
@@ -127,20 +177,21 @@ kubectl exec -it pgbouncer-0 -n db -- \
 
 ### PostgreSQL Node Roles
 
-| Node | Role | Replication | Priority | PgBouncer Connection |
-|------|------|-------------|----------|---------------------|
-| `postgres-nodes-0` | PRIMARY | Source | 50 | Write pool target |
-| `postgres-nodes-1` | SYNC REPLICA | Synchronous | 50 | Read pool + failover target |
-| `postgres-nodes-2` | ASYNC REPLICA | Asynchronous | Default | Read pool |
-| `postgres-nodes-3` | ASYNC REPLICA | Asynchronous | Default | Read pool |
+| Node | Role | Replication | Priority | Service Routing |
+|------|------|-------------|----------|-----------------|
+| `postgres-nodes-0` | PRIMARY | Source | 50 | postgres-primary |
+| `postgres-nodes-1` | SYNC REPLICA | Synchronous | 50 | postgres-replicas |
+| `postgres-nodes-2` | ASYNC REPLICA | Asynchronous | Default | postgres-replicas |
+| `postgres-nodes-3` | ASYNC REPLICA | Asynchronous | Default | postgres-replicas |
 
 ### PgBouncer Configuration
 
-| PgBouncer Instance | Purpose | Pool Mode | Target Nodes | Max Connections |
-|-------------------|---------|-----------|--------------|-----------------|
-| `pgbouncer-0` | Write Pool | Transaction | Primary only | 100 |
+| PgBouncer Instance | Purpose | Pool Mode | Target Service | Max Connections |
+|-------------------|---------|-----------|----------------|-----------------|
+| `pgbouncer-primary` | Write Pool | Transaction | postgres-primary | 100 |
+| `pgbouncer-replicas` | Read Pool | Transaction | postgres-replicas | 100 |
 
-### Enhanced Resource Allocation
+### Resource Allocation
 
 #### PostgreSQL Nodes
 ```yaml
@@ -164,50 +215,36 @@ resources:
     cpu: "500m"
 ```
 
-## 🎯 PgBouncer Integration
+## 🎯 Connection Patterns
 
-### Connection Pool Configuration
+### Application Connection Endpoints
+
+| Service | Purpose | Port | Connection String |
+|---------|---------|------|-------------------|
+| `pgbouncer-primary` | Write operations | 6432 | `postgresql://postgres:password@pgbouncer-primary.db.svc.cluster.local:6432/postgres` |
+| `pgbouncer-replicas` | Read operations | 6432 | `postgresql://postgres:password@pgbouncer-replicas.db.svc.cluster.local:6432/postgres` |
+| `postgres-primary` | Direct primary access | 5432 | `postgresql://postgres:password@postgres-primary.db.svc.cluster.local:5432/postgres` |
+| `postgres-replicas` | Direct replica access | 5432 | `postgresql://postgres:password@postgres-replicas.db.svc.cluster.local:5432/postgres` |
+
+### PgBouncer Configuration
 
 ```ini
-# Write Pool (pgbouncer-0)
+# Primary Pool Configuration
 [databases]
-writedb = host=postgres-nodes.db.svc.cluster.local port=5432 dbname=postgres
+postgres = host=postgres-primary.db.svc.cluster.local port=5432 dbname=postgres
 
 [pgbouncer]
 pool_mode = transaction
 max_client_conn = 100
-default_pool_size = 20
+default_pool_size = 10
 reserve_pool_size = 5
 auth_type = trust
-```
-
-### Service Discovery and Load Balancing
-
-```yaml
-# PgBouncer Service Configuration
-apiVersion: v1
-kind: Service
-metadata:
-  name: pgbouncer-service
-spec:
-  selector:
-    app: pgbouncer
-  ports:
-  - name: write-pool
-    port: 6432
-    targetPort: 6432
-    protocol: TCP
-  - name: read-pool
-    port: 6433
-    targetPort: 6432
-    protocol: TCP
-  type: LoadBalancer
 ```
 
 ## 🔍 Monitoring and Health Checks
 
 ### PostgreSQL Health Checks
-- **Readiness**: `pg_isready` validation
+- **Readiness**: `pg_isready` validation on port 5432
 - **Liveness**: `pg_autoctl` process + connectivity checks
 - **Enhanced timing**: Failover-aware probe intervals
 
@@ -218,54 +255,38 @@ readinessProbe:
   tcpSocket:
     port: 6432
   initialDelaySeconds: 10
-  periodSeconds: 15
+  periodSeconds: 10
 
 livenessProbe:
-  exec:
-    command:
-    - /bin/sh
-    - -c
-    - "echo 'SHOW STATS;' | psql -h localhost -p 6432 -U pgbouncer pgbouncer"
-  initialDelaySeconds: 30
+  tcpSocket:
+    port: 6432
+  initialDelaySeconds: 10
   periodSeconds: 30
 ```
 
+### Service Discovery
+
+The cluster uses **automatic pod labeling** to enable dynamic service discovery:
+
+- **Pod Labeler**: Python sidecar container that monitors PostgreSQL roles
+- **Dynamic Labels**: Pods get labeled with `pg-role=primary` or `pg-role=replica`
+- **Service Selectors**: Kubernetes services automatically route to correct nodes
+
 ## 🛠️ Operations Guide
-
-### Application Connection Patterns
-
-#### PGBouncer Operations
-```python
-# Python example - Write connections
-import psycopg2
-
-# Connect to write pool
-write_conn = psycopg2.connect(
-    host="pgbouncer-service.db.svc.cluster.local",
-    port=6432,
-    database="writedb",
-    user="your_app_user"
-)
-
-# Perform writes
-with write_conn.cursor() as cur:
-    cur.execute("INSERT INTO table VALUES (%s, %s)", (value1, value2))
-    write_conn.commit()
-```
 
 ### Viewing Cluster Status
 
 ```bash
 # PostgreSQL cluster state
 kubectl exec -it postgres-nodes-0 -n db -- \
-  pg_autoctl show state
+  pg_autoctl show state --pgdata /var/lib/postgresql/pgdata/master
 
-# PgBouncer connection pools
-kubectl exec -it pgbouncer-0 -n db -- \
+# PgBouncer primary pool status
+kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW POOLS;"
 
-# PgBouncer statistics
-kubectl exec -it pgbouncer-1 -n db -- \
+# PgBouncer replica pool status
+kubectl exec -it deployment/pgbouncer-replicas -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW STATS;"
 ```
 
@@ -273,59 +294,32 @@ kubectl exec -it pgbouncer-1 -n db -- \
 
 ```bash
 # Reload PgBouncer configuration
-kubectl exec -it pgbouncer-0 -n db -- \
+kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "RELOAD;"
 
 # Pause all connections
-kubectl exec -it pgbouncer-0 -n db -- \
+kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "PAUSE;"
 
 # Resume all connections
-kubectl exec -it pgbouncer-0 -n db -- \
+kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "RESUME;"
 ```
 
-### Manual Failover with PgBouncer
+### Manual Failover
 
 ```bash
 # 1. Initiate PostgreSQL failover
 kubectl exec -it postgres-nodes-0 -n db -- \
-  pg_autoctl perform failover
+  pg_autoctl perform failover --pgdata /var/lib/postgresql/pgdata/master
 
-# 2. Update PgBouncer write pool target (if needed)
-kubectl exec -it pgbouncer-0 -n db -- \
-  psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "RELOAD;"
-
+# 2. Services automatically route to new primary (via pod labels)
 # 3. Verify new primary connection
-kubectl exec -it pgbouncer-0 -n db -- \
-  psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW DATABASES;"
+kubectl exec -it deployment/pgbouncer-primary -n db -- \
+  psql -h localhost -p 6432 -d postgres -c "SELECT pg_is_in_recovery();"
 ```
 
-## 🔐 Enhanced Security Features
-
-### PgBouncer Security
-- **Connection encryption**: SSL between applications and PgBouncer
-- **Backend encryption**: SSL between PgBouncer and PostgreSQL
-- **Authentication**: Separate auth for pool management
-- **Network isolation**: Service-based access control
-
-### Recommended Production Security
-
-```yaml
-# PgBouncer SSL configuration
-ssl_mode = require
-ssl_ca_file = /etc/ssl/certs/ca.crt
-ssl_cert_file = /etc/ssl/certs/server.crt
-ssl_key_file = /etc/ssl/private/server.key
-
-# PostgreSQL SSL enforcement
-ssl = on
-ssl_cert_file = '/var/lib/postgresql/server.crt'
-ssl_key_file = '/var/lib/postgresql/server.key'
-ssl_ca_file = '/var/lib/postgresql/ca.crt'
-```
-
-## 📊 Performance Benefits with PgBouncer
+## 📊 Performance Benefits
 
 ### Connection Pool Advantages
 
@@ -340,58 +334,167 @@ ssl_ca_file = '/var/lib/postgresql/ca.crt'
 
 #### PostgreSQL (Enhanced for pooling)
 ```postgresql
-# Reduced max_connections (pooling handles multiplexing)
+# Connection settings
 max_connections = 100
+shared_buffers = 128MB
+effective_cache_size = 512MB
 
-# Optimized for fewer, longer-lived connections
-shared_buffers = 256MB
-effective_cache_size = 1GB
-work_mem = 8MB
+# Replication settings
+max_wal_senders = 10
+max_replication_slots = 10
+wal_keep_segments = 64
+
+# Performance tuning
+checkpoint_completion_target = 0.9
+wal_buffers = 16MB
 ```
 
 #### PgBouncer (Transaction pooling)
 ```ini
 # Optimal for OLTP workloads
 pool_mode = transaction
-default_pool_size = 20
-reserve_pool_size = 5
+default_pool_size = 10
+max_client_conn = 100
 server_round_robin = 1
 ```
 
 ## 🚨 Troubleshooting
 
-### PgBouncer Issues
+### Common Issues
 
-#### Connection Pool Exhaustion
+#### Pod Labeling Issues
+```bash
+# Check pod labels
+kubectl get pods -n db --show-labels
+
+# Check service endpoints
+kubectl get endpoints -n db
+
+# Restart pod labeler if needed
+kubectl delete pod -l app=postgres-nodes -n db
+```
+
+#### PgBouncer Connection Issues
 ```bash
 # Check pool status
-kubectl exec -it pgbouncer-0 -n db -- \
+kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW POOLS;"
 
-# Check waiting clients
-kubectl exec -it pgbouncer-0 -n db -- \
-  psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW CLIENTS;"
-```
-
-#### Backend Connection Issues
-```bash
-# Check server connections
-kubectl exec -it pgbouncer-0 -n db -- \
+# Check backend connections
+kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW SERVERS;"
-
-# Kill problematic connections
-kubectl exec -it pgbouncer-0 -n db -- \
-  psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "KILL <pid>;"
 ```
 
-### Split-brain Prevention
+#### Split-brain Prevention
 - Monitor node coordinates all decisions
-- PgBouncer respects PostgreSQL cluster state
-- Automatic reconnection to new primary
+- PgBouncer respects service discovery changes
+- Automatic reconnection to new primary via service routing
+
+### Debug Commands
+
+```bash
+# Check node connectivity to monitor
+kubectl exec -it postgres-nodes-0 -n db -- \
+  pg_isready -h postgres-monitor.db.svc.cluster.local -p 6001
+
+# View detailed PostgreSQL logs
+kubectl logs postgres-nodes-0 -c postgres -n db --tail=100
+
+# Check replication status
+kubectl exec -it postgres-nodes-0 -n db -- \
+  psql -U postgres -c "SELECT * FROM pg_stat_replication;"
+
+# Test PgBouncer connectivity
+kubectl exec -it deployment/pgbouncer-primary -n db -- \
+  psql -h postgres-primary.db.svc.cluster.local -p 5432 -U postgres -c "SELECT 1;"
+```
+
+## 🔄 Backup and Recovery
+
+### Automated Backups
+
+```bash
+# Create backup job
+kubectl create job postgres-backup-$(date +%Y%m%d) \
+  --image=postgres:11 -n db \
+  --command -- /bin/bash -c \
+  "pg_dump -h pgbouncer-primary.db.svc.cluster.local -p 6432 -U postgres postgres > /backup/backup-$(date +%Y%m%d).sql"
+```
+
+### Point-in-Time Recovery (PITR)
+
+Enable WAL archiving for PITR support:
+
+```sql
+# Add to postgresql.conf
+archive_mode = on
+archive_command = 'cp %p /path/to/archive/%f'
+wal_level = replica
+```
+
+## 📈 Scaling Strategies
+
+### Horizontal Scaling
+
+```bash
+# Add more PostgreSQL replicas
+kubectl scale statefulset postgres-nodes --replicas=6 -n db
+
+# Scale PgBouncer pools
+kubectl scale deployment pgbouncer-replicas --replicas=3 -n db
+```
+
+### Advanced Pool Configurations
+
+```ini
+# Workload-specific databases
+[databases]
+postgres = host=postgres-primary.db.svc.cluster.local port=5432 dbname=postgres
+analytics = host=postgres-replicas.db.svc.cluster.local port=5432 dbname=postgres pool_size=15
+reporting = host=postgres-replicas.db.svc.cluster.local port=5432 dbname=postgres pool_size=20
+```
+
+## 🔐 Security Considerations
+
+### Production Hardening
+
+1. **Authentication**: Replace trust authentication with md5/scram-sha-256
+2. **SSL/TLS**: Use proper certificates instead of self-signed
+3. **Network Policies**: Implement Kubernetes NetworkPolicies
+4. **RBAC**: Minimize service account permissions
+5. **Secrets**: Use external secret management (Vault, etc.)
+
+### Security Configuration Example
+
+```yaml
+# Network Policy
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgres-network-policy
+  namespace: db
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres-nodes
+  policyTypes:
+  - Ingress
+  ingress:
+  - from:
+    - podSelector:
+        matchLabels:
+          app: pgbouncer-primary
+    - podSelector:
+        matchLabels:
+          app: pgbouncer-replicas
+    ports:
+    - protocol: TCP
+      port: 5432
+```
 
 ## 🔄 Maintenance and Updates
 
-### Rolling Updates with Zero Downtime
+### Rolling Updates
 
 ```bash
 # Update PostgreSQL nodes (automatic failover)
@@ -399,37 +502,17 @@ kubectl patch statefulset postgres-nodes -n db -p \
   '{"spec":{"template":{"spec":{"containers":[{"name":"postgres","image":"citusdata/pg_auto_failover:new-version"}]}}}}'
 
 # Update PgBouncer (connection draining)
-kubectl patch statefulset pgbouncer -n db -p \
+kubectl patch deployment pgbouncer-primary -n db -p \
   '{"spec":{"template":{"spec":{"containers":[{"name":"pgbouncer","image":"pgbouncer/pgbouncer:new-version"}]}}}}'
 ```
 
-### Configuration Management
+### Regular Maintenance Tasks
 
-```bash
-# Update PgBouncer configuration
-kubectl apply -f pgbouncer-configmap.yaml
-
-# Reload without restart (preserves connections)
-kubectl exec -it pgbouncer-0 -n db -- \
-  psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "RELOAD;"
-```
-
-## 📈 Scaling Strategies
-
-### Horizontal Scaling
-- **PostgreSQL replicas**: Add more async replicas for read scaling
-- **PgBouncer instances**: Add dedicated pools for different workload types
-- **Geographic distribution**: Deploy PgBouncer closer to applications
-
-### Advanced Pool Configurations
-
-```ini
-# Workload-specific pools
-[databases]
-analytics = host=postgres-nodes-2 port=5432 dbname=postgres pool_size=10
-reporting = host=postgres-nodes-3 port=5432 dbname=postgres pool_size=15
-oltp = host=postgres-nodes-0 port=5432 dbname=postgres pool_size=25
-```
+1. **Monitor disk usage**: Set up alerts for WAL and data directories
+2. **Vacuum analysis**: Schedule regular VACUUM and ANALYZE
+3. **Update statistics**: Keep table statistics current
+4. **Security updates**: Regularly update container images
+5. **Backup verification**: Test backup restoration procedures
 
 ## 📚 Additional Resources
 
