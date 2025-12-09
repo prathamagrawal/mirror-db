@@ -1,0 +1,66 @@
+# =============================================================================
+# Kustomize Base Configuration for PostgreSQL HA Cluster
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+metadata:
+  name: postgres-ha-cluster
+
+namespace: db
+
+# Common labels applied to all resources
+commonLabels:
+  app.kubernetes.io/name: postgres-cluster
+  app.kubernetes.io/managed-by: kustomize
+
+resources:
+  # Namespace
+  - namespace.yaml
+  
+  # RBAC
+  - service-account.yaml
+  - rbac/labeler.yaml
+  
+  # Configuration
+  - configuration/cluster-config.yaml
+  - configuration/secrets.yaml
+  - configuration/failover-node.yaml
+  - configuration/pgbouncer.yaml
+  - configuration/labeler.yaml
+  
+  # Storage
+  - pvcs/monitor.yaml
+  
+  # Services
+  - services/nodes.yaml
+  - services/monitor.yaml
+  - services/pgbouncer.yaml
+  
+  # Deployments
+  - deployments/postgres-monitor.yaml
+  - deployments/node-setup.yaml
+  - deployments/pgbouncer-primary.yaml
+  - deployments/pgbouncer-replicas.yaml
+  
+  # HA Configuration
+  - ha/pod-disruption-budgets.yaml
+
+# Image customization - override in overlays
+# Using 'latest' for development. Pin specific versions for production.
+images:
+  - name: citusdata/pg_auto_failover
+    newTag: latest
+  - name: edoburu/pgbouncer
+    newTag: latest
+  - name: busybox
+    newTag: latest
+  - name: python
+    newTag: 3.11-slim
+
+# ConfigMap generator for environment-specific overrides
+configMapGenerator: []
+
+# Secret generator (use with --enable-alpha-plugins or external secret management)
+# secretGenerator: []
+

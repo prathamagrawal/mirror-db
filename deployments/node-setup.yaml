@@ -5,10 +5,13 @@ metadata:
   namespace: db
   labels:
     app: postgres-nodes
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/component: database
     role: data
 spec:
   serviceName: postgres-nodes
-  replicas: 4 # 1 master + 1 sync replica + 2 async replicas
+  replicas: 4  # 1 primary + 1 sync + 2 async replicas
+  podManagementPolicy: OrderedReady  # MUST be sequential for pg_auto_failover
   selector:
     matchLabels:
       app: postgres-nodes
@@ -16,6 +19,8 @@ spec:
     metadata:
       labels:
         app: postgres-nodes
+        app.kubernetes.io/name: postgres-cluster
+        app.kubernetes.io/component: database
         role: data
     spec:
       securityContext:
@@ -23,9 +28,39 @@ spec:
         runAsUser: 101
         runAsGroup: 101
       terminationGracePeriodSeconds: 60
+      # Anti-affinity: spread postgres pods across different nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: postgres-nodes
+                topologyKey: kubernetes.io/hostname
+            - weight: 50
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: postgres-nodes
+                topologyKey: topology.kubernetes.io/zone
+      # Topology spread: ensure even distribution
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: postgres-nodes
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: postgres-nodes
       initContainers:
       - name: initdb
-        image: citusdata/pg_auto_failover:latest
+        image: citusdata/pg_auto_failover:latest  # Use 'latest' for now, pin after verifying available tags
         command: ["/bin/bash", "/etc/scripts/init-node.sh"]
         securityContext:
           runAsGroup: 101
@@ -36,9 +71,6 @@ spec:
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql
-        - name: postgres-node-config
-          mountPath: /etc/config
-          readOnly: true
         - name: postgres-secrets
           mountPath: /etc/secrets
           readOnly: true
@@ -49,7 +81,7 @@ spec:
           mountPath: /shared
       containers:
       - name: postgres
-        image: citusdata/pg_auto_failover:latest
+        image: citusdata/pg_auto_failover:latest  # Use 'latest' for now, pin after verifying available tags
         env:
         - name: PGDATA
           value: /var/lib/postgresql/pgdata
@@ -65,9 +97,6 @@ spec:
         volumeMounts:
         - name: postgres-data
           mountPath: /var/lib/postgresql
-        - name: postgres-node-config
-          mountPath: /etc/config
-          readOnly: true
         - name: postgres-secrets
           mountPath: /etc/secrets
           readOnly: true
@@ -151,15 +180,30 @@ spec:
                 sleep 5
       - name: pod-labeler
         securityContext:
-          runAsUser: 0
-          runAsGroup: 0
-        image: python:3.11-slim-bullseye
+          runAsUser: 101
+          runAsGroup: 101
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+              - ALL
+        # Using pre-built image with dependencies (see images/pod-labeler/Dockerfile)
+        # For now, using python slim with pip install
+        image: python:3.11-slim-bookworm
+        imagePullPolicy: IfNotPresent
         command: ["/bin/sh", "-c"]
         args:
           - |
-            pip install --no-cache-dir --upgrade --force-reinstall psycopg2-binary kubernetes && \
+            pip install --user --no-cache-dir psycopg2-binary kubernetes && \
             echo "Pip install succeeded" && \
             python -u /mnt/labeler.py
+        resources:
+          requests:
+            memory: "64Mi"
+            cpu: "25m"
+          limits:
+            memory: "128Mi"
+            cpu: "100m"
         env:
           - name: NAMESPACE
             valueFrom:
@@ -174,9 +218,6 @@ spec:
       - name: labeler-script
         configMap:
           name: pod-labeler-script
-      - name: postgres-node-config
-        configMap:
-          name: postgres-node-config
       - name: postgres-secrets
         secret:
           secretName: postgres-creds

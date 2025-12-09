@@ -5,13 +5,14 @@ metadata:
   namespace: db
   labels:
     app: postgres-monitor
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/component: monitor
 spec:
   selector:
     app: postgres-monitor
   ports:
-    - name: postgres
-      port: 5432
-      targetPort: 5432
+    - name: monitor
+      port: 6001
+      targetPort: 6001
       protocol: TCP
-  clusterIP: None 
   type: ClusterIP

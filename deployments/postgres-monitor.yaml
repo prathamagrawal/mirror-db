@@ -3,8 +3,14 @@ kind: Deployment
 metadata:
   name: postgres-monitor
   namespace: db
+  labels:
+    app: postgres-monitor
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/component: monitor
 spec:
   replicas: 1
+  strategy:
+    type: Recreate  # Single instance, use Recreate to avoid conflicts
   selector:
     matchLabels:
       app: postgres-monitor
@@ -12,6 +18,8 @@ spec:
     metadata:
       labels:
         app: postgres-monitor
+        app.kubernetes.io/name: postgres-cluster
+        app.kubernetes.io/component: monitor
     spec:
       securityContext:
         fsGroup: 101
@@ -20,7 +28,7 @@ spec:
       terminationGracePeriodSeconds: 30
       initContainers:
         - name: init-db
-          image: citusdata/pg_auto_failover:latest
+          image: citusdata/pg_auto_failover:latest  # Use 'latest' for now, pin after verifying available tags
           command: ["/bin/bash", "-c"]
           args:
             - |
@@ -58,7 +66,7 @@ spec:
               mountPath: /var/lib/postgresql
       containers:
         - name: postgres-monitor
-          image: citusdata/pg_auto_failover:latest
+          image: citusdata/pg_auto_failover:latest  # Use 'latest' for now, pin after verifying available tags
           command: ["/bin/bash", "-c"]
           args:
             - |

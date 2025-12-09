@@ -6,10 +6,11 @@ metadata:
 data:
   init-node.sh: |
     #!/bin/bash
-    set -e
+    set -euo pipefail
 
     NODE_NAME=$(hostname)
     export MONITOR_URI="postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:6001/pg_auto_failover"
+    export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
 
     case $NODE_NAME in
       *-0)
@@ -56,86 +57,116 @@ data:
       exit 0
     fi
 
-
     MY_HOSTNAME="${NODE_NAME}.postgres-nodes.db.svc.cluster.local"
 
-    # Initialize node with enhanced settings
+    # Initialize node
     pg_autoctl create postgres \
       --hostname "$MY_HOSTNAME" \
       --monitor "$MONITOR_URI" \
       --auth trust \
       --ssl-self-signed \
-      --pgdata "$PGDATA" \
+      --pgdata "$PGDATA"
 
-    # Enhanced PostgreSQL configuration
-    cat >> "$PGDATA/postgresql.conf" <<EOF
+    # CRITICAL: Stop PostgreSQL before modifying config
+    echo "Stopping PostgreSQL to apply custom configuration..."
+    pg_ctl -D "$PGDATA" stop -m fast || true
+    sleep 2
+
+    # Now safely modify postgresql.conf using sed to replace existing values
+    # This ensures no duplicates and proper precedence
+    
+    # Backup original config
+    cp "$PGDATA/postgresql.conf" "$PGDATA/postgresql.conf.backup"
+    
+    # Function to set or update a parameter
+    set_pg_param() {
+      local param=$1
+      local value=$2
+      local config_file="$PGDATA/postgresql.conf"
+      
+      # Remove any existing lines with this parameter (commented or not)
+      sed -i "/^[#]*\s*${param}\s*=/d" "$config_file"
+      
+      # Append the new value
+      echo "${param} = ${value}" >> "$config_file"
+    }
+
+    echo "Applying custom PostgreSQL configuration..."
+    
     # Network settings
-    listen_addresses = '*'
-    port = 5432
+    set_pg_param "listen_addresses" "'*'"
+    set_pg_param "port" "5432"
     
     # Enhanced replication settings
-    max_wal_senders = 10
-    max_replication_slots = 10
-    wal_keep_segments = 64
+    set_pg_param "max_wal_senders" "10"
+    set_pg_param "max_replication_slots" "10"
+    # Use wal_keep_size (PG13+) instead of deprecated wal_keep_segments
+    set_pg_param "wal_keep_size" "1GB"
     
     # Failover tuning
-    wal_level = replica
-    hot_standby = on
-    hot_standby_feedback = on
+    set_pg_param "wal_level" "replica"
+    set_pg_param "hot_standby" "on"
+    set_pg_param "hot_standby_feedback" "on"
     
     # Performance tuning
-    shared_buffers = 128MB
-    effective_cache_size = 512MB
-    checkpoint_completion_target = 0.9
-    wal_buffers = 16MB
+    set_pg_param "shared_buffers" "128MB"
+    set_pg_param "effective_cache_size" "512MB"
+    set_pg_param "checkpoint_completion_target" "0.9"
+    set_pg_param "wal_buffers" "16MB"
     
     # Connection settings
-    max_connections = 100
+    set_pg_param "max_connections" "250"
     
     # Logging for debugging
-    log_destination = 'stderr'
-    logging_collector = on
-    log_filename = 'postgresql-%Y-%m-%d_%H%M%S.log'
-    log_min_duration_statement = 1000
-    log_line_prefix = '%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '
-    log_connections = on
-    log_disconnections = on
+    set_pg_param "log_destination" "'stderr'"
+    set_pg_param "logging_collector" "on"
+    set_pg_param "log_filename" "'postgresql-%Y-%m-%d_%H%M%S.log'"
+    set_pg_param "log_min_duration_statement" "1000"
+    set_pg_param "log_line_prefix" "'%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '"
+    set_pg_param "log_connections" "on"
+    set_pg_param "log_disconnections" "on"
     
     # Auto-failover specific settings
-    synchronous_standby_names = '*'
+    set_pg_param "synchronous_standby_names" "'*'"
     
-    EOF
-    
-    # Enhanced pg_hba.conf
+    # Enhanced pg_hba.conf (append is fine here as these are rules, not parameters)
     cat >> "$PGDATA/pg_hba.conf" <<EOF
-    # Allow pg_auto_failover connections
+
+    # Auto-generated pg_auto_failover rules
     hostssl all pgautofailover_replicator 0.0.0.0/0 trust
     hostssl replication pgautofailover_replicator 0.0.0.0/0 trust
     hostssl all autoctl_node 0.0.0.0/0 trust
     hostssl replication autoctl_node 0.0.0.0/0 trust
-    
-    # Allow application connections
+
+    # Application connections
     hostssl all postgres 0.0.0.0/0 trust
     host all postgres 0.0.0.0/0 trust
-    
+
     # Local connections
     local all all trust
     host all all 127.0.0.1/32 trust
     host all all ::1/128 trust
-    
+
     # Cluster internal connections
     hostssl all all 10.0.0.0/8 trust
     hostssl replication all 10.0.0.0/8 trust
     EOF
     
+    echo "Configuration applied successfully"
     echo "Node initialization completed for $NODE_NAME"
+    
+    # Verify the configuration
+    echo "Verifying key settings:"
+    grep "^max_connections" "$PGDATA/postgresql.conf" || echo "max_connections not found!"
+    grep "^shared_buffers" "$PGDATA/postgresql.conf" || echo "shared_buffers not found!"
 
   start-node.sh: |
     #!/bin/bash
-    set -e
+    set -euo pipefail
 
     NODE_NAME=$(hostname)
     export MONITOR_URI="postgres://autoctl_node@postgres-monitor.db.svc.cluster.local:6001/pg_auto_failover"
+    export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
 
     case $NODE_NAME in
       *-0)
@@ -161,13 +192,12 @@ data:
     # Create a shutdown handler
     shutdown_handler() {
       echo "Received shutdown signal, stopping pg_autoctl gracefully..."
-      pg_autoctl stop --pgdata "$PGDATA" --fast
+      pg_autoctl stop --pgdata "$PGDATA" --fast || true
       exit 0
     }
 
     # Trap shutdown signals
     trap 'shutdown_handler' SIGTERM SIGINT
-
 
     echo "Starting pg_autoctl for $NODE_NAME"
     echo "PGDATA: $PGDATA"

@@ -2,10 +2,11 @@
 <hr />
 
 
-[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-11-336791?style=flat-square&logo=postgresql)](https://www.postgresql.org/)
-[![PgBouncer](https://img.shields.io/badge/PgBouncer-1.18-4169E1?style=flat-square)](https://www.pgbouncer.org/)
+[![PostgreSQL](https://img.shields.io/badge/PostgreSQL-15-336791?style=flat-square&logo=postgresql)](https://www.postgresql.org/)
+[![PgBouncer](https://img.shields.io/badge/PgBouncer-1.22.1-4169E1?style=flat-square)](https://www.pgbouncer.org/)
 [![Kubernetes](https://img.shields.io/badge/Kubernetes-1.20+-326CE5?style=flat-square&logo=kubernetes)](https://kubernetes.io/)
-[![pg_auto_failover](https://img.shields.io/badge/pg__auto__failover-latest-orange?style=flat-square)](https://github.com/citusdata/pg_auto_failover)
+[![pg_auto_failover](https://img.shields.io/badge/pg__auto__failover-v2.1-orange?style=flat-square)](https://github.com/citusdata/pg_auto_failover)
+[![Kustomize](https://img.shields.io/badge/Kustomize-ready-green?style=flat-square)](https://kustomize.io/)
 
 > 🚀 **Enterprise-grade PostgreSQL High Availability cluster** with automatic failover, intelligent connection pooling, and load balancing for mission-critical workloads in Kubernetes.
 
@@ -88,6 +89,45 @@ The cluster uses **automatic pod labeling** to enable dynamic service discovery:
 - **Dynamic Labels**: Pods get labeled with `pg-role=primary` or `pg-role=replica`
 - **Service Selectors**: Kubernetes services automatically route to correct nodes
 
+## 📁 Project Structure
+
+```
+mirror-db/
+├── kustomization.yaml          # Base Kustomize configuration
+├── namespace.yaml              # Kubernetes namespace
+├── service-account.yaml        # ServiceAccount for pods
+├── configuration/              # ConfigMaps and Secrets
+│   ├── cluster-config.yaml     # ⚙️ Central configuration values
+│   ├── failover-node.yaml      # Node initialization scripts
+│   ├── pgbouncer.yaml          # PgBouncer configuration
+│   ├── labeler.yaml            # Pod labeler script
+│   └── secrets.yaml            # Database credentials
+├── deployments/                # Workload definitions
+│   ├── postgres-monitor.yaml   # pg_auto_failover monitor
+│   ├── node-setup.yaml         # PostgreSQL StatefulSet
+│   ├── pgbouncer-primary.yaml  # PgBouncer for writes
+│   └── pgbouncer-replicas.yaml # PgBouncer for reads
+├── services/                   # Kubernetes Services
+│   ├── nodes.yaml              # PostgreSQL services
+│   ├── monitor.yaml            # Monitor service
+│   └── pgbouncer.yaml          # PgBouncer services
+├── ha/                         # High Availability configs
+│   └── pod-disruption-budgets.yaml
+├── rbac/                       # RBAC configurations
+│   └── labeler.yaml            # Pod labeler permissions
+├── pvcs/                       # PersistentVolumeClaims
+│   └── monitor.yaml
+├── overlays/                   # 🎯 Environment-specific configs
+│   ├── production/             # Production settings
+│   │   └── kustomization.yaml
+│   └── development/            # Development settings
+│       └── kustomization.yaml
+└── images/                     # Custom container images
+    └── pod-labeler/            # Pre-built labeler image
+        ├── Dockerfile
+        └── labeler.py
+```
+
 ## 📋 Prerequisites
 
 Before deploying this cluster, ensure you have:
@@ -102,14 +142,33 @@ Before deploying this cluster, ensure you have:
 
 ## 🚀 Quick Start
 
-### 1. Clone and Navigate
+### Option 1: Deploy with Kustomize (Recommended)
+
+```bash
+# Clone the repository
+git clone https://github.com/prathamagrawal/mirror-db
+cd mirror-db
+
+# Deploy to development environment
+kubectl apply -k overlays/development/
+
+# OR Deploy to production environment
+kubectl apply -k overlays/production/
+
+# OR Deploy base configuration
+kubectl apply -k .
+```
+
+### Option 2: Manual Deployment
+
+#### 1. Clone and Navigate
 
 ```bash
 git clone https://github.com/prathamagrawal/mirror-db
 cd mirror-db
 ```
 
-### 2. Deploy Prerequisites
+#### 2. Deploy Prerequisites
 
 ```bash
 # Create namespace
@@ -126,14 +185,14 @@ kubectl apply -f configuration/secrets.yaml
 kubectl apply -f configuration/
 ```
 
-### 3. Deploy Storage
+#### 3. Deploy Storage
 
 ```bash
 # Deploy PVC for monitor
 kubectl apply -f pvc/monitor.yaml
 ```
 
-### 4. Deploy Monitor Node
+#### 4. Deploy Monitor Node
 
 ```bash
 # Deploy the monitor first
@@ -146,7 +205,7 @@ kubectl apply -f services/monitor.yaml
 kubectl wait --for=condition=ready pod -l app=postgres-monitor -n db --timeout=300s
 ```
 
-### 5. Deploy PostgreSQL Cluster
+#### 5. Deploy PostgreSQL Cluster
 
 ```bash
 # Deploy the PostgreSQL StatefulSet
@@ -159,7 +218,7 @@ kubectl apply -f services/nodes.yaml
 kubectl wait --for=condition=ready pod -l app=postgres-nodes -n db --timeout=600s
 ```
 
-### 6. Deploy PgBouncer
+#### 6. Deploy PgBouncer
 
 ```bash
 # Deploy PgBouncer pools
@@ -167,7 +226,7 @@ kubectl apply -f deployments/pgbouncer.yaml
 kubectl apply -f services/pgbouncer.yaml
 ```
 
-### 7. Verify Deployment
+#### 7. Verify Deployment
 
 ```bash
 # Check PostgreSQL pods
@@ -379,7 +438,7 @@ effective_cache_size = 512MB
 # Replication settings
 max_wal_senders = 10
 max_replication_slots = 10
-wal_keep_segments = 64
+wal_keep_size = 1GB
 
 # Performance tuning
 checkpoint_completion_target = 0.9

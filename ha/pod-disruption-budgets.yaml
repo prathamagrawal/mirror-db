@@ -1,0 +1,48 @@
+# =============================================================================
+# Pod Disruption Budgets for PostgreSQL HA Cluster
+# Ensures minimum availability during voluntary disruptions
+# =============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-nodes-pdb
+  namespace: db
+  labels:
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/component: database
+spec:
+  # At least 2 nodes must be available (for quorum in a 4-node cluster)
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app: postgres-nodes
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgres-monitor-pdb
+  namespace: db
+  labels:
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/component: monitor
+spec:
+  # Monitor must always be available
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: postgres-monitor
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: pgbouncer-primary-pdb
+  namespace: db
+  labels:
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/component: pgbouncer
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app: pgbouncer-primary
+
