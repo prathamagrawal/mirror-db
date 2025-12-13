@@ -209,10 +209,16 @@ spec:
             valueFrom:
               fieldRef:
                 fieldPath: metadata.namespace
+          - name: HOME
+            value: /tmp/labeler-home
+          - name: PYTHONUSERBASE
+            value: /tmp/labeler-home/.local
         volumeMounts:
           - name: labeler-script
             mountPath: /mnt/labeler.py
             subPath: labeler.py
+          - name: labeler-home
+            mountPath: /tmp/labeler-home
 
       volumes:
       - name: labeler-script
@@ -227,6 +233,8 @@ spec:
           defaultMode: 0755
       - name: shared-config
         emptyDir: {}
+      - name: labeler-home
+        emptyDir: {}
       restartPolicy: Always
       serviceAccountName: postgres-service-account
   volumeClaimTemplates:
@@ -237,4 +245,4 @@ spec:
       resources:
         requests:
           storage: 50Gi
-      storageClassName: standard
+      # storageClassName: standard  # Use default storage class

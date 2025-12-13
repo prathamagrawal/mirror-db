@@ -56,7 +56,7 @@ data:
   WAL_BUFFERS: "16MB"
   MAX_WAL_SENDERS: "10"
   MAX_REPLICATION_SLOTS: "10"
-  WAL_KEEP_SIZE: "1GB"  # Replaces deprecated wal_keep_segments
+  WAL_KEEP_SEGMENTS: "64"  # 64 × 16MB = 1GB (use wal_keep_size for PG13+)
   
   # PgBouncer tuning
   POOL_MODE: "transaction"

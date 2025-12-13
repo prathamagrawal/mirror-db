@@ -10,8 +10,10 @@ resources:
   - ../../
 
 # Development-specific labels
-commonLabels:
-  environment: development
+labels:
+  - pairs:
+      environment: development
+    includeSelectors: false
 
 # Reduce resources for dev environment
 patches:

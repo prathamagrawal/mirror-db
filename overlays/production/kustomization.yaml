@@ -10,8 +10,10 @@ resources:
   - ../../
 
 # Production-specific labels
-commonLabels:
-  environment: production
+labels:
+  - pairs:
+      environment: production
+    includeSelectors: false
 
 # Production-specific patches
 patches:
@@ -41,9 +43,10 @@ patches:
       - op: replace
         path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
         value: "200Gi"
-      - op: replace
-        path: /spec/volumeClaimTemplates/0/spec/storageClassName
-        value: "ssd-production"
+      # Uncomment and set appropriate storage class for production
+      # - op: replace
+      #   path: /spec/volumeClaimTemplates/0/spec/storageClassName
+      #   value: "ssd-production"
 
   # Scale up PgBouncer for production
   - target:

@@ -12,7 +12,8 @@ data:
     [pgbouncer]
     listen_port = 6432
     listen_addr = *
-    auth_type = trust
+    auth_type = any
+    auth_file = /etc/pgbouncer/userlist.txt
     admin_users = postgres
     stats_users = postgres
     pool_mode = transaction
@@ -34,5 +35,6 @@ data:
     server_tls_sslmode = disable
 
   userlist.txt: |
-    # For trust authentication, this can be empty
-    # For md5 authentication, add: "postgres" "md5hash"
+    # For trust authentication, user must still be listed (password can be empty)
+    "postgres" ""
+    "pgautofailover_replicator" ""

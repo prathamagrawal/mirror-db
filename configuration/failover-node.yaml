@@ -100,8 +100,9 @@ data:
     # Enhanced replication settings
     set_pg_param "max_wal_senders" "10"
     set_pg_param "max_replication_slots" "10"
-    # Use wal_keep_size (PG13+) instead of deprecated wal_keep_segments
-    set_pg_param "wal_keep_size" "1GB"
+    # Use wal_keep_segments for PG11/12, wal_keep_size for PG13+
+    # 64 segments × 16MB = 1GB
+    set_pg_param "wal_keep_segments" "64"
     
     # Failover tuning
     set_pg_param "wal_level" "replica"

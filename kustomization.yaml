@@ -9,10 +9,11 @@ metadata:
 
 namespace: db
 
-# Common labels applied to all resources
-commonLabels:
-  app.kubernetes.io/name: postgres-cluster
-  app.kubernetes.io/managed-by: kustomize
+labels:
+  - pairs:
+      app.kubernetes.io/name: postgres-cluster
+      app.kubernetes.io/managed-by: kustomize
+    includeSelectors: false
 
 resources:
   # Namespace

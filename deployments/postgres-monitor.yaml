@@ -27,6 +27,14 @@ spec:
         runAsGroup: 101
       terminationGracePeriodSeconds: 30
       initContainers:
+        - name: fix-permissions
+          image: busybox
+          command: ['sh', '-c', 'chown -R 101:101 /var/lib/postgresql && chmod 700 /var/lib/postgresql']
+          securityContext:
+            runAsUser: 0
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql
         - name: init-db
           image: citusdata/pg_auto_failover:latest  # Use 'latest' for now, pin after verifying available tags
           command: ["/bin/bash", "-c"]
