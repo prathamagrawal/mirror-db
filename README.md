@@ -244,6 +244,104 @@ kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW POOLS;"
 ```
 
+## 🎛️ Kustomize Overlays
+
+This project uses **Kustomize** to manage environment-specific configurations. The base configuration provides sensible defaults, while overlays customize settings for different environments.
+
+### Directory Structure
+
+```
+mirror-db/
+├── kustomization.yaml              # Base configuration (namespace: db)
+├── overlays/
+│   ├── development/
+│   │   └── kustomization.yaml      # Dev overrides (namespace: db-dev)
+│   └── production/
+│       └── kustomization.yaml      # Prod overrides (namespace: db-production)
+```
+
+### Deployment Commands
+
+```bash
+# Deploy BASE configuration (for local/minikube testing)
+kubectl apply -k .
+
+# Deploy DEVELOPMENT environment
+kubectl apply -k overlays/development/
+
+# Deploy PRODUCTION environment
+kubectl apply -k overlays/production/
+
+# Preview what will be deployed (dry-run)
+kubectl kustomize .
+kubectl kustomize overlays/development/
+kubectl kustomize overlays/production/
+```
+
+### Environment Comparison
+
+| Setting | Base | Development | Production |
+|---------|------|-------------|------------|
+| **Namespace** | `db` | `db-dev` | `db-production` |
+| **PostgreSQL Replicas** | 4 | 2 | 4 |
+| **PostgreSQL Memory (request/limit)** | 512Mi / 1Gi | 256Mi / 512Mi | 2Gi / 4Gi |
+| **PostgreSQL CPU (request/limit)** | 250m / 1000m | 100m / 500m | 500m / 2000m |
+| **PostgreSQL Storage** | 50Gi | 10Gi | 200Gi |
+| **Monitor PVC Storage** | 10Gi | 2Gi | 10Gi |
+| **PgBouncer Primary Replicas** | 1 | 1 | 2 |
+| **PgBouncer Memory (request/limit)** | 64Mi / 256Mi | 64Mi / 256Mi | 256Mi / 512Mi |
+| **PDB minAvailable** | 2 | 1 | 2 |
+| **Image Tags** | `latest` | `latest` | Pinned versions |
+| **Storage Class** | Default | Default | Custom (configurable) |
+
+### What Each Overlay Does
+
+#### Base (`kubectl apply -k .`)
+- Default namespace: `db`
+- 4 PostgreSQL nodes (1 primary + 1 sync + 2 async replicas)
+- Uses `latest` image tags
+- Moderate resource allocation
+- Suitable for local development and testing
+
+#### Development (`kubectl apply -k overlays/development/`)
+- Namespace: `db-dev`
+- **Reduced replicas**: Only 2 PostgreSQL nodes (faster startup)
+- **Minimal resources**: Lower CPU/memory for laptop-friendly deployment
+- **Smaller storage**: 10Gi per node, 2Gi for monitor
+- **Relaxed PDB**: Allows more disruption for easy testing
+- Labels: `environment: development`
+
+#### Production (`kubectl apply -k overlays/production/`)
+- Namespace: `db-production`
+- **Full cluster**: 4 PostgreSQL nodes with proper HA
+- **High resources**: 2Gi-4Gi memory, 500m-2000m CPU
+- **Large storage**: 200Gi per node for production data
+- **Scaled PgBouncer**: 2 replicas for redundancy
+- **Pinned images**: Specific versions for stability
+- **Custom storage class**: Configure for SSD/production storage
+- Labels: `environment: production`
+
+### Customizing Overlays
+
+To customize for your environment, edit the overlay's `kustomization.yaml`:
+
+```yaml
+# overlays/production/kustomization.yaml
+patches:
+  - target:
+      kind: StatefulSet
+      name: postgres-nodes
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 6  # Scale to 6 nodes
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/storageClassName
+        value: "fast-ssd"  # Use your storage class
+```
+
+---
+
 ## ⚙️ Configuration Details
 
 ### PostgreSQL Node Roles
@@ -337,7 +435,7 @@ livenessProbe:
 
 ### 🔍 Connection Pool Monitoring
 
-<img src="./images/ConnectionPoolingTesting.png" alt="PgBouncer Connection Pooling in Action" width="800"/>
+<img src="./static/ConnectionPoolingTesting.png" alt="PgBouncer Connection Pooling in Action" width="800"/>
 
 The image above shows PgBouncer in action with:
 - Real-time connection statistics and pool utilization
@@ -395,6 +493,119 @@ kubectl exec -it deployment/pgbouncer-primary -n db -- \
 
 ## ✅ Validation and Testing
 
+### Quick Verification Commands
+
+```bash
+# Check all pods are running
+kubectl get pods -n db
+
+# Check pod labels (pg-role should show primary/replica)
+kubectl get pods -n db -l app=postgres-nodes --show-labels
+
+# Check cluster state from monitor
+kubectl exec -n db deployment/postgres-monitor -- \
+  pg_autoctl show state --pgdata /var/lib/postgresql/pgdata/monitor
+
+# Check services and endpoints
+kubectl get svc,endpoints -n db
+```
+
+### Failover Testing
+
+#### Step 1: Identify Current Primary
+
+```bash
+# Check which pod is primary
+kubectl get pods -n db -l app=postgres-nodes --show-labels | grep primary
+
+# Or query the monitor
+kubectl exec -n db deployment/postgres-monitor -- \
+  pg_autoctl show state --pgdata /var/lib/postgresql/pgdata/monitor
+```
+
+#### Step 2: Create Test Data (Optional)
+
+```bash
+# Connect via PgBouncer and create test table
+kubectl exec -it -n db deployment/pgbouncer-primary -- \
+  psql -h localhost -p 6432 -U postgres -c "
+    CREATE TABLE IF NOT EXISTS failover_test (
+      id serial PRIMARY KEY,
+      ts timestamp DEFAULT now(),
+      node text
+    );
+    INSERT INTO failover_test (node) VALUES ('before-failover');
+    SELECT * FROM failover_test;
+  "
+```
+
+#### Step 3: Trigger Failover
+
+```bash
+# Option A: Graceful failover (recommended)
+kubectl exec -n db postgres-nodes-0 -- \
+  pg_autoctl perform failover --pgdata /var/lib/postgresql/pgdata/master
+
+# Option B: Simulate failure by deleting primary pod
+kubectl delete pod -n db postgres-nodes-0
+
+# Option C: Force kill (aggressive test)
+kubectl delete pod -n db postgres-nodes-0 --grace-period=0 --force
+```
+
+#### Step 4: Watch Failover Progress
+
+```bash
+# Terminal 1: Watch pods
+kubectl get pods -n db -w
+
+# Terminal 2: Watch monitor logs
+kubectl logs -n db deployment/postgres-monitor -f
+
+# Terminal 3: Watch cluster state changes
+watch -n 2 "kubectl exec -n db deployment/postgres-monitor -- \
+  pg_autoctl show state --pgdata /var/lib/postgresql/pgdata/monitor 2>/dev/null"
+```
+
+#### Step 5: Verify New Primary
+
+```bash
+# Check new primary pod
+kubectl get pods -n db -l app=postgres-nodes --show-labels | grep primary
+
+# Verify data is accessible
+kubectl exec -it -n db deployment/pgbouncer-primary -- \
+  psql -h localhost -p 6432 -U postgres -c "SELECT * FROM failover_test;"
+
+# Confirm writes work on new primary
+kubectl exec -it -n db deployment/pgbouncer-primary -- \
+  psql -h localhost -p 6432 -U postgres -c "
+    INSERT INTO failover_test (node) VALUES ('after-failover');
+    SELECT * FROM failover_test;
+  "
+```
+
+#### Step 6: Verify Old Primary Rejoins as Replica
+
+```bash
+# The StatefulSet will recreate postgres-nodes-0
+# Watch it rejoin as a replica
+kubectl logs -n db postgres-nodes-0 -f
+
+# Confirm it's now a replica
+kubectl get pods -n db -l app=postgres-nodes --show-labels
+```
+
+### Expected Failover Timeline
+
+| Phase | Duration | Description |
+|-------|----------|-------------|
+| Detection | 10-30s | Monitor detects primary failure |
+| Promotion | 5-10s | Sync replica promoted to primary |
+| Label Update | 1-5s | Pod labeler updates `pg-role` label |
+| Service Routing | 1-5s | Kubernetes routes traffic to new primary |
+| **Total** | **~30-60s** | Full failover completion |
+
 ### Connection Testing
 
 <img src="./static/PoolingResults.png" alt="Connection Testing Script" width="800"/>
@@ -438,7 +649,7 @@ effective_cache_size = 512MB
 # Replication settings
 max_wal_senders = 10
 max_replication_slots = 10
-wal_keep_size = 1GB
+wal_keep_segments = 64  # ~1GB (use wal_keep_size for PG13+)
 
 # Performance tuning
 checkpoint_completion_target = 0.9
@@ -454,24 +665,126 @@ max_client_conn = 100
 server_round_robin = 1
 ```
 
+## 🧹 Cleanup and Teardown
+
+### Remove Specific Environment
+
+```bash
+# Remove base deployment
+kubectl delete -k .
+
+# Remove development environment
+kubectl delete -k overlays/development/
+
+# Remove production environment
+kubectl delete -k overlays/production/
+```
+
+### Complete Cleanup (including PVCs)
+
+```bash
+# Delete all resources in namespace
+kubectl delete namespace db
+
+# For development
+kubectl delete namespace db-dev
+
+# For production
+kubectl delete namespace db-production
+
+# If PVCs persist, delete manually
+kubectl delete pvc -n db --all
+```
+
+### Reset and Redeploy
+
+```bash
+# Full reset (delete everything and redeploy)
+kubectl delete namespace db
+kubectl apply -k .
+
+# Wait for all pods to be ready
+kubectl wait --for=condition=ready pod -l app=postgres-monitor -n db --timeout=300s
+kubectl wait --for=condition=ready pod -l app=postgres-nodes -n db --timeout=600s
+```
+
+---
+
 ## 🚨 Troubleshooting
 
 ### Common Issues
 
+#### PVC Not Bound / Pod Pending
+
+**Symptom**: Pod stuck in `Pending` state with PVC errors
+
+```bash
+# Check PVC status
+kubectl get pvc -n db
+
+# Check events
+kubectl describe pod <pod-name> -n db | grep -A 10 Events
+```
+
+**Solution**: The StorageClass might not exist. Remove `storageClassName` to use default:
+
+```yaml
+# In pvcs/monitor.yaml or volumeClaimTemplates
+spec:
+  # storageClassName: standard  # Comment out to use default
+```
+
+#### Permission Denied Errors in Init Containers
+
+**Symptom**: `mkdir: cannot create directory: Permission denied`
+
+**Solution**: Add a `fix-permissions` init container that runs as root:
+
+```yaml
+initContainers:
+  - name: fix-permissions
+    image: busybox
+    command: ['sh', '-c', 'chown -R 101:101 /var/lib/postgresql']
+    securityContext:
+      runAsUser: 0
+    volumeMounts:
+      - name: pgdata
+        mountPath: /var/lib/postgresql
+```
+
+#### PostgreSQL Config Parameter Errors
+
+**Symptom**: `unrecognized configuration parameter "wal_keep_size"`
+
+**Cause**: `wal_keep_size` is PostgreSQL 13+, but pg_auto_failover uses PostgreSQL 11
+
+**Solution**: Use `wal_keep_segments` instead (64 segments ≈ 1GB)
+
 #### Pod Labeling Issues
+
 ```bash
 # Check pod labels
 kubectl get pods -n db --show-labels
 
+# Check pod-labeler container logs
+kubectl logs -n db postgres-nodes-0 -c pod-labeler
+
 # Check service endpoints
 kubectl get endpoints -n db
 
-# Restart pod labeler if needed
+# Restart pods if labels are stale
 kubectl delete pod -l app=postgres-nodes -n db
 ```
 
 #### PgBouncer Connection Issues
+
 ```bash
+# Check PgBouncer logs
+kubectl logs -n db deployment/pgbouncer-primary
+
+# Check actual config inside container
+kubectl exec -n db deployment/pgbouncer-primary -- cat /etc/pgbouncer/pgbouncer.ini
+
 # Check pool status
 kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW POOLS;"
@@ -479,6 +792,25 @@ kubectl exec -it deployment/pgbouncer-primary -n db -- \
 # Check backend connections
 kubectl exec -it deployment/pgbouncer-primary -n db -- \
   psql -h localhost -p 6432 -U pgbouncer -d pgbouncer -c "SHOW SERVERS;"
+```
+
+#### CrashLoopBackOff on Sidecar Containers
+
+**Symptom**: Pod shows `1/2 Running` or `CrashLoopBackOff`
+
+**Cause**: Often the `pod-labeler` sidecar failing due to pip install permission issues
+
+**Solution**: Ensure HOME directory is writable:
+
+```yaml
+env:
+  - name: HOME
+    value: /tmp/labeler-home
+  - name: PYTHONUSERBASE
+    value: /tmp/labeler-home/.local
+volumeMounts:
+  - name: labeler-home
+    mountPath: /tmp/labeler-home
 ```
 
 #### Split-brain Prevention
