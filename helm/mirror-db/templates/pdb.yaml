@@ -1,0 +1,52 @@
+{{- if .Values.ha.podDisruptionBudget.enabled }}
+# =============================================================================
+# Pod Disruption Budgets for PostgreSQL HA Cluster
+# Ensures minimum availability during voluntary disruptions
+# =============================================================================
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-postgres-nodes-pdb
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  # At least N nodes must be available (for quorum)
+  minAvailable: {{ .Values.ha.podDisruptionBudget.postgresNodes.minAvailable }}
+  selector:
+    matchLabels:
+      app: postgres-nodes
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-monitor-pdb
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitor
+spec:
+  # Monitor must always be available
+  minAvailable: {{ .Values.ha.podDisruptionBudget.monitor.minAvailable }}
+  selector:
+    matchLabels:
+      app: postgres-monitor
+{{- if .Values.pgbouncer.enabled }}
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-pgbouncer-primary-pdb
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgbouncer
+spec:
+  minAvailable: {{ .Values.ha.podDisruptionBudget.pgbouncer.minAvailable }}
+  selector:
+    matchLabels:
+      app: pgbouncer-primary
+{{- end }}
+{{- end }}
+

@@ -1,0 +1,67 @@
+🎉 PostgreSQL HA Cluster has been deployed!
+
+═══════════════════════════════════════════════════════════════════════════════
+📊 CLUSTER INFORMATION
+═══════════════════════════════════════════════════════════════════════════════
+
+Namespace: {{ include "mirror-db.namespace" . }}
+Release:   {{ .Release.Name }}
+
+═══════════════════════════════════════════════════════════════════════════════
+🔌 CONNECTION ENDPOINTS
+═══════════════════════════════════════════════════════════════════════════════
+
+PostgreSQL (Direct):
+  • Primary (Read/Write): postgres-primary.{{ include "mirror-db.namespace" . }}.svc.cluster.local:{{ .Values.postgresql.port }}
+  • Replicas (Read-Only): postgres-replicas.{{ include "mirror-db.namespace" . }}.svc.cluster.local:{{ .Values.postgresql.port }}
+
+{{- if .Values.pgbouncer.enabled }}
+PgBouncer (Connection Pooling - Recommended):
+  • Primary Pool:  pgbouncer-primary-service.{{ include "mirror-db.namespace" . }}.svc.cluster.local:{{ .Values.pgbouncer.port }}
+  • Replicas Pool: pgbouncer-replicas-service.{{ include "mirror-db.namespace" . }}.svc.cluster.local:{{ .Values.pgbouncer.port }}
+{{- end }}
+
+Monitor:
+  • postgres-monitor.{{ include "mirror-db.namespace" . }}.svc.cluster.local:{{ .Values.postgresql.monitorPort }}
+
+═══════════════════════════════════════════════════════════════════════════════
+🔑 CREDENTIALS
+═══════════════════════════════════════════════════════════════════════════════
+
+To get the PostgreSQL password:
+
+  kubectl get secret {{ include "mirror-db.secretName" . }} -n {{ include "mirror-db.namespace" . }} \
+    -o jsonpath="{.data.postgres-password}" | base64 -d
+
+═══════════════════════════════════════════════════════════════════════════════
+🔍 VERIFY DEPLOYMENT
+═══════════════════════════════════════════════════════════════════════════════
+
+Check pod status:
+  kubectl get pods -n {{ include "mirror-db.namespace" . }} -l app.kubernetes.io/instance={{ .Release.Name }}
+
+Check cluster state:
+  kubectl exec -n {{ include "mirror-db.namespace" . }} postgres-nodes-0 -c postgres -- \
+    pg_autoctl show state
+
+View monitor logs:
+  kubectl logs -n {{ include "mirror-db.namespace" . }} -l app=postgres-monitor -f
+
+═══════════════════════════════════════════════════════════════════════════════
+📝 QUICK TEST
+═══════════════════════════════════════════════════════════════════════════════
+
+Connect to primary:
+  kubectl exec -it -n {{ include "mirror-db.namespace" . }} postgres-nodes-0 -c postgres -- \
+    psql -U postgres -c "SELECT pg_is_in_recovery();"
+
+{{- if .Values.pgbouncer.enabled }}
+Test via PgBouncer:
+  kubectl run -it --rm psql-test --image=postgres:15 --restart=Never -n {{ include "mirror-db.namespace" . }} -- \
+    psql -h pgbouncer-primary-service -p {{ .Values.pgbouncer.port }} -U postgres -c "SELECT 1;"
+{{- end }}
+
+═══════════════════════════════════════════════════════════════════════════════
+
+For more information, visit: https://github.com/pratham/mirror-db
+

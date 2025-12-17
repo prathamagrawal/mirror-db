@@ -1,0 +1,80 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-cluster-config
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app.kubernetes.io/component: configuration
+data:
+  # =============================================================================
+  # CLUSTER CONFIGURATION
+  # Centralized configuration for the PostgreSQL HA cluster
+  # =============================================================================
+
+  # Namespace configuration
+  NAMESPACE: {{ include "mirror-db.namespace" . | quote }}
+  
+  # PostgreSQL Configuration
+  PG_VERSION: {{ .Values.postgresql.version | quote }}
+  PG_PORT: {{ .Values.postgresql.port | quote }}
+  MONITOR_PORT: {{ .Values.postgresql.monitorPort | quote }}
+  PGBOUNCER_PORT: {{ .Values.pgbouncer.port | quote }}
+  
+  # Cluster sizing
+  REPLICA_COUNT: {{ .Values.postgresql.cluster.replicaCount | quote }}
+  PGBOUNCER_REPLICAS: {{ .Values.pgbouncer.replicas | quote }}
+  
+  # Storage configuration
+  DATA_STORAGE_SIZE: {{ .Values.postgresql.storage.size | quote }}
+  MONITOR_STORAGE_SIZE: {{ .Values.monitor.storage.size | quote }}
+  {{- if .Values.postgresql.storage.storageClass }}
+  STORAGE_CLASS: {{ .Values.postgresql.storage.storageClass | quote }}
+  {{- end }}
+  
+  # Resource configuration - Postgres Nodes
+  PG_REQUESTS_MEMORY: {{ .Values.postgresql.resources.requests.memory | quote }}
+  PG_REQUESTS_CPU: {{ .Values.postgresql.resources.requests.cpu | quote }}
+  PG_LIMITS_MEMORY: {{ .Values.postgresql.resources.limits.memory | quote }}
+  PG_LIMITS_CPU: {{ .Values.postgresql.resources.limits.cpu | quote }}
+  
+  # Resource configuration - Monitor
+  MONITOR_REQUESTS_MEMORY: {{ .Values.monitor.resources.requests.memory | quote }}
+  MONITOR_REQUESTS_CPU: {{ .Values.monitor.resources.requests.cpu | quote }}
+  MONITOR_LIMITS_MEMORY: {{ .Values.monitor.resources.limits.memory | quote }}
+  MONITOR_LIMITS_CPU: {{ .Values.monitor.resources.limits.cpu | quote }}
+  
+  # Resource configuration - PgBouncer
+  PGBOUNCER_REQUESTS_MEMORY: {{ .Values.pgbouncer.resources.requests.memory | quote }}
+  PGBOUNCER_REQUESTS_CPU: {{ .Values.pgbouncer.resources.requests.cpu | quote }}
+  PGBOUNCER_LIMITS_MEMORY: {{ .Values.pgbouncer.resources.limits.memory | quote }}
+  PGBOUNCER_LIMITS_CPU: {{ .Values.pgbouncer.resources.limits.cpu | quote }}
+  
+  # PostgreSQL tuning
+  MAX_CONNECTIONS: {{ .Values.postgresql.tuning.maxConnections | quote }}
+  SHARED_BUFFERS: {{ .Values.postgresql.tuning.sharedBuffers | quote }}
+  EFFECTIVE_CACHE_SIZE: {{ .Values.postgresql.tuning.effectiveCacheSize | quote }}
+  WAL_BUFFERS: {{ .Values.postgresql.tuning.walBuffers | quote }}
+  MAX_WAL_SENDERS: {{ .Values.postgresql.tuning.maxWalSenders | quote }}
+  MAX_REPLICATION_SLOTS: {{ .Values.postgresql.tuning.maxReplicationSlots | quote }}
+  WAL_KEEP_SEGMENTS: {{ .Values.postgresql.tuning.walKeepSegments | quote }}
+  
+  # PgBouncer tuning
+  POOL_MODE: {{ .Values.pgbouncer.pooling.mode | quote }}
+  DEFAULT_POOL_SIZE: {{ .Values.pgbouncer.pooling.defaultPoolSize | quote }}
+  MAX_CLIENT_CONN: {{ .Values.pgbouncer.pooling.maxClientConn | quote }}
+  RESERVE_POOL_SIZE: {{ .Values.pgbouncer.pooling.reservePoolSize | quote }}
+  MAX_DB_CONNECTIONS: {{ .Values.pgbouncer.pooling.maxDbConnections | quote }}
+  
+  # Probe timings
+  READINESS_INITIAL_DELAY: {{ .Values.postgresql.probes.readiness.initialDelaySeconds | quote }}
+  READINESS_PERIOD: {{ .Values.postgresql.probes.readiness.periodSeconds | quote }}
+  LIVENESS_INITIAL_DELAY: {{ .Values.postgresql.probes.liveness.initialDelaySeconds | quote }}
+  LIVENESS_PERIOD: {{ .Values.postgresql.probes.liveness.periodSeconds | quote }}
+  
+  # DNS settings
+  MONITOR_HOST: {{ include "mirror-db.monitorHost" . | quote }}
+  PRIMARY_HOST: {{ include "mirror-db.primaryHost" . | quote }}
+  REPLICAS_HOST: {{ include "mirror-db.replicasHost" . | quote }}
+  NODES_SERVICE: {{ include "mirror-db.nodesHost" . | quote }}
+

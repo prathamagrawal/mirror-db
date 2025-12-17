@@ -1,0 +1,212 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-pg-auto-failover-config
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app.kubernetes.io/component: configuration
+data:
+  init-node.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    NODE_NAME=$(hostname)
+    export MONITOR_URI="{{ include "mirror-db.monitorUri" . }}"
+    export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+
+    case $NODE_NAME in
+      *-0)
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/master
+        export PGUSER=postgres
+        export PRIORITY=50
+        export NODE_ROLE="primary"
+        export REPLICATION=sync
+        ;;
+      *-1)
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/syncreplica
+        export PRIORITY=50
+        export NODE_ROLE="secondary"
+        export REPLICATION=async
+        ;;
+      *-2)
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
+        export PGUSER=postgres
+        export NODE_ROLE="secondary"
+        export REPLICATION=async
+        ;;
+      *-3)
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
+        export PGUSER=postgres
+        export NODE_ROLE="secondary"
+        export REPLICATION=async
+        ;;
+      *)
+        mkdir -p /var/lib/postgresql/pgdata
+        export PGDATA=/var/lib/postgresql/pgdata/replica
+        export PGUSER=postgres
+        export NODE_ROLE="secondary"
+        export REPLICATION=async
+        ;;
+    esac
+
+    # Check if already initialized
+    if [ -f "$PGDATA/postgresql.conf" ]; then
+      echo "Node already initialized, skipping..."
+      exit 0
+    fi
+
+    MY_HOSTNAME="${NODE_NAME}.postgres-nodes.{{ include "mirror-db.namespace" . }}.svc.cluster.local"
+
+    # Initialize node
+    pg_autoctl create postgres \
+      --hostname "$MY_HOSTNAME" \
+      --monitor "$MONITOR_URI" \
+      --auth trust \
+      --ssl-self-signed \
+      --pgdata "$PGDATA"
+
+    # CRITICAL: Stop PostgreSQL before modifying config
+    echo "Stopping PostgreSQL to apply custom configuration..."
+    pg_ctl -D "$PGDATA" stop -m fast || true
+    sleep 2
+
+    # Now safely modify postgresql.conf using sed to replace existing values
+    # This ensures no duplicates and proper precedence
+    
+    # Backup original config
+    cp "$PGDATA/postgresql.conf" "$PGDATA/postgresql.conf.backup"
+    
+    # Function to set or update a parameter
+    set_pg_param() {
+      local param=$1
+      local value=$2
+      local config_file="$PGDATA/postgresql.conf"
+      
+      # Remove any existing lines with this parameter (commented or not)
+      sed -i "/^[#]*\s*${param}\s*=/d" "$config_file"
+      
+      # Append the new value
+      echo "${param} = ${value}" >> "$config_file"
+    }
+
+    echo "Applying custom PostgreSQL configuration..."
+    
+    # Network settings
+    set_pg_param "listen_addresses" "'*'"
+    set_pg_param "port" "{{ .Values.postgresql.port }}"
+    
+    # Enhanced replication settings
+    set_pg_param "max_wal_senders" "{{ .Values.postgresql.tuning.maxWalSenders }}"
+    set_pg_param "max_replication_slots" "{{ .Values.postgresql.tuning.maxReplicationSlots }}"
+    # Use wal_keep_segments for PG11/12, wal_keep_size for PG13+
+    # 64 segments × 16MB = 1GB
+    set_pg_param "wal_keep_segments" "{{ .Values.postgresql.tuning.walKeepSegments }}"
+    
+    # Failover tuning
+    set_pg_param "wal_level" "replica"
+    set_pg_param "hot_standby" "on"
+    set_pg_param "hot_standby_feedback" "on"
+    
+    # Performance tuning
+    set_pg_param "shared_buffers" "{{ .Values.postgresql.tuning.sharedBuffers }}"
+    set_pg_param "effective_cache_size" "{{ .Values.postgresql.tuning.effectiveCacheSize }}"
+    set_pg_param "checkpoint_completion_target" "0.9"
+    set_pg_param "wal_buffers" "{{ .Values.postgresql.tuning.walBuffers }}"
+    
+    # Connection settings
+    set_pg_param "max_connections" "{{ .Values.postgresql.tuning.maxConnections }}"
+    
+    # Logging for debugging
+    set_pg_param "log_destination" "'stderr'"
+    set_pg_param "logging_collector" "on"
+    set_pg_param "log_filename" "'postgresql-%Y-%m-%d_%H%M%S.log'"
+    set_pg_param "log_min_duration_statement" "1000"
+    set_pg_param "log_line_prefix" "'%t [%p]: [%l-1] user=%u,db=%d,app=%a,client=%h '"
+    set_pg_param "log_connections" "on"
+    set_pg_param "log_disconnections" "on"
+    
+    # Auto-failover specific settings
+    set_pg_param "synchronous_standby_names" "'*'"
+    
+    # Enhanced pg_hba.conf (append is fine here as these are rules, not parameters)
+    cat >> "$PGDATA/pg_hba.conf" <<EOF
+
+    # Auto-generated pg_auto_failover rules
+    hostssl all pgautofailover_replicator 0.0.0.0/0 trust
+    hostssl replication pgautofailover_replicator 0.0.0.0/0 trust
+    hostssl all autoctl_node 0.0.0.0/0 trust
+    hostssl replication autoctl_node 0.0.0.0/0 trust
+
+    # Application connections
+    hostssl all postgres 0.0.0.0/0 trust
+    host all postgres 0.0.0.0/0 trust
+
+    # Local connections
+    local all all trust
+    host all all 127.0.0.1/32 trust
+    host all all ::1/128 trust
+
+    # Cluster internal connections
+    hostssl all all 10.0.0.0/8 trust
+    hostssl replication all 10.0.0.0/8 trust
+    EOF
+    
+    echo "Configuration applied successfully"
+    echo "Node initialization completed for $NODE_NAME"
+    
+    # Verify the configuration
+    echo "Verifying key settings:"
+    grep "^max_connections" "$PGDATA/postgresql.conf" || echo "max_connections not found!"
+    grep "^shared_buffers" "$PGDATA/postgresql.conf" || echo "shared_buffers not found!"
+
+  start-node.sh: |
+    #!/bin/bash
+    set -euo pipefail
+
+    NODE_NAME=$(hostname)
+    export MONITOR_URI="{{ include "mirror-db.monitorUri" . }}"
+    export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+
+    case $NODE_NAME in
+      *-0)
+        export PGDATA=/var/lib/postgresql/pgdata/master
+        ;;
+      *-1)
+        export PGDATA=/var/lib/postgresql/pgdata/syncreplica
+        ;;
+      *-2)
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
+        ;;
+      *-3)
+        export PGDATA=/var/lib/postgresql/pgdata/asyncreplica
+        ;;
+      *)
+        export PGDATA=/var/lib/postgresql/pgdata/replica
+        ;;
+    esac
+
+    export PGUSER=postgres
+    export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+
+    # Create a shutdown handler
+    shutdown_handler() {
+      echo "Received shutdown signal, stopping pg_autoctl gracefully..."
+      pg_autoctl stop --pgdata "$PGDATA" --fast || true
+      exit 0
+    }
+
+    # Trap shutdown signals
+    trap 'shutdown_handler' SIGTERM SIGINT
+
+    echo "Starting pg_autoctl for $NODE_NAME"
+    echo "PGDATA: $PGDATA"
+    echo "Monitor URI: $MONITOR_URI"
+
+    # Start pg_autoctl with enhanced logging
+    exec pg_autoctl run --pgdata "$PGDATA"
+

@@ -1,0 +1,46 @@
+{{- if .Values.pgbouncer.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-pgbouncer-config
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app.kubernetes.io/component: pgbouncer
+data:
+  pgbouncer.ini: |
+    [databases]
+    # Note: sslmode is configured separately via server_tls_sslmode, not in connection string
+    postgres = host=DATABASES_HOST port=DATABASES_PORT dbname=DATABASES_DBNAME user=DATABASES_USER password=DATABASES_PASSWORD
+
+    [pgbouncer]
+    listen_port = {{ .Values.pgbouncer.port }}
+    listen_addr = *
+    auth_type = any
+    auth_file = /etc/pgbouncer/userlist.txt
+    admin_users = postgres
+    stats_users = postgres
+    pool_mode = {{ .Values.pgbouncer.pooling.mode }}
+    default_pool_size = {{ .Values.pgbouncer.pooling.defaultPoolSize }}
+    max_client_conn = {{ .Values.pgbouncer.pooling.maxClientConn }}
+    reserve_pool_size = {{ .Values.pgbouncer.pooling.reservePoolSize }}
+    reserve_pool_timeout = 5
+    max_db_connections = {{ .Values.pgbouncer.pooling.maxDbConnections }}
+    max_user_connections = {{ .Values.pgbouncer.pooling.maxDbConnections }}
+    server_reset_query = DISCARD ALL
+    server_check_query = select 1
+    server_check_delay = 30
+    log_connections = 1
+    log_disconnections = 1
+    log_pooler_errors = 1
+    verbose = 1
+    ignore_startup_parameters = extra_float_digits
+    # Disable TLS for local/minikube (enable for production with proper certs)
+    server_tls_sslmode = disable
+
+  userlist.txt: |
+    # For trust authentication, user must still be listed (password can be empty)
+    "postgres" ""
+    "pgautofailover_replicator" ""
+{{- end }}
+

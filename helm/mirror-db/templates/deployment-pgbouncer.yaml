@@ -1,0 +1,239 @@
+{{- if .Values.pgbouncer.enabled }}
+# =============================================================================
+# PgBouncer Primary Deployment
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer-primary
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app: pgbouncer-primary
+    app.kubernetes.io/component: pgbouncer
+spec:
+  replicas: {{ .Values.pgbouncer.replicas }}
+  selector:
+    matchLabels:
+      app: pgbouncer-primary
+  template:
+    metadata:
+      labels:
+        {{- include "mirror-db.labels" . | nindent 8 }}
+        app: pgbouncer-primary
+        app.kubernetes.io/component: pgbouncer
+    spec:
+      # Anti-affinity to spread pgbouncer pods
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: pgbouncer
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+      - name: config-init
+        image: {{ include "mirror-db.busyboxImage" . }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Copy config files to writable location
+          cp /etc/pgbouncer-ro/* /etc/pgbouncer/
+          chmod 644 /etc/pgbouncer/*
+        volumeMounts:
+        - name: pgbouncer-config-ro
+          mountPath: /etc/pgbouncer-ro
+          readOnly: true
+        - name: pgbouncer-config-rw
+          mountPath: /etc/pgbouncer
+      containers:
+      - name: pgbouncer
+        image: {{ include "mirror-db.pgbouncerImage" . }}
+        imagePullPolicy: {{ .Values.pgbouncer.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.pgbouncer.port }}
+          name: pgbouncer
+        env:
+        - name: DATABASES_HOST
+          value: "{{ include "mirror-db.primaryHost" . }}"
+        - name: DATABASES_PORT
+          value: "{{ .Values.postgresql.port }}"
+        - name: DATABASES_USER
+          value: "postgres"
+        - name: DATABASES_DBNAME
+          value: "postgres"
+        - name: DATABASES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mirror-db.secretName" . }}
+              key: postgres-password
+        - name: POOL_MODE
+          value: {{ .Values.pgbouncer.pooling.mode | quote }}
+        - name: DEFAULT_POOL_SIZE
+          value: {{ .Values.pgbouncer.pooling.defaultPoolSize | quote }}
+        - name: MAX_CLIENT_CONN
+          value: {{ .Values.pgbouncer.pooling.maxClientConn | quote }}
+        volumeMounts:
+        - name: pgbouncer-config-rw
+          mountPath: /etc/pgbouncer
+        - name: postgres-secrets
+          mountPath: /etc/secrets
+          readOnly: true
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Update config with runtime values
+          sed -i "s/DATABASES_HOST/${DATABASES_HOST}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_PORT/${DATABASES_PORT}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_USER/${DATABASES_USER}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_DBNAME/${DATABASES_DBNAME}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_PASSWORD/${DATABASES_PASSWORD}/g" /etc/pgbouncer/pgbouncer.ini
+
+          # Start PgBouncer (edoburu image uses direct pgbouncer command)
+          exec pgbouncer /etc/pgbouncer/pgbouncer.ini
+        resources:
+          {{- toYaml .Values.pgbouncer.resources | nindent 10 }}
+        readinessProbe:
+          tcpSocket:
+            port: {{ .Values.pgbouncer.port }}
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: {{ .Values.pgbouncer.port }}
+          initialDelaySeconds: 10
+          periodSeconds: 30
+      volumes:
+      - name: pgbouncer-config-ro
+        configMap:
+          name: {{ include "mirror-db.fullname" . }}-pgbouncer-config
+      - name: pgbouncer-config-rw
+        emptyDir: {}
+      - name: postgres-secrets
+        secret:
+          secretName: {{ include "mirror-db.secretName" . }}
+
+---
+# =============================================================================
+# PgBouncer Replicas Deployment
+# =============================================================================
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pgbouncer-replicas
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app: pgbouncer-replicas
+    app.kubernetes.io/component: pgbouncer
+spec:
+  replicas: {{ .Values.pgbouncer.replicas }}
+  selector:
+    matchLabels:
+      app: pgbouncer-replicas
+  template:
+    metadata:
+      labels:
+        {{- include "mirror-db.labels" . | nindent 8 }}
+        app: pgbouncer-replicas
+        app.kubernetes.io/component: pgbouncer
+    spec:
+      # Anti-affinity to spread pgbouncer pods
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: pgbouncer
+                topologyKey: kubernetes.io/hostname
+      initContainers:
+      - name: config-init
+        image: {{ include "mirror-db.busyboxImage" . }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Copy config files to writable location
+          cp /etc/pgbouncer-ro/* /etc/pgbouncer/
+          chmod 644 /etc/pgbouncer/*
+        volumeMounts:
+        - name: pgbouncer-config-ro
+          mountPath: /etc/pgbouncer-ro
+          readOnly: true
+        - name: pgbouncer-config-rw
+          mountPath: /etc/pgbouncer
+      containers:
+      - name: pgbouncer
+        image: {{ include "mirror-db.pgbouncerImage" . }}
+        imagePullPolicy: {{ .Values.pgbouncer.image.pullPolicy }}
+        ports:
+        - containerPort: {{ .Values.pgbouncer.port }}
+          name: pgbouncer
+        env:
+        - name: DATABASES_HOST
+          value: "{{ include "mirror-db.replicasHost" . }}"
+        - name: DATABASES_PORT
+          value: "{{ .Values.postgresql.port }}"
+        - name: DATABASES_USER
+          value: "postgres"
+        - name: DATABASES_DBNAME
+          value: "postgres"
+        - name: DATABASES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: {{ include "mirror-db.secretName" . }}
+              key: postgres-password
+        - name: POOL_MODE
+          value: {{ .Values.pgbouncer.pooling.mode | quote }}
+        - name: DEFAULT_POOL_SIZE
+          value: {{ .Values.pgbouncer.pooling.defaultPoolSize | quote }}
+        - name: MAX_CLIENT_CONN
+          value: {{ .Values.pgbouncer.pooling.maxClientConn | quote }}
+        volumeMounts:
+        - name: pgbouncer-config-rw
+          mountPath: /etc/pgbouncer
+        - name: postgres-secrets
+          mountPath: /etc/secrets
+          readOnly: true
+        command:
+        - /bin/sh
+        - -c
+        - |
+          # Update config with runtime values
+          sed -i "s/DATABASES_HOST/${DATABASES_HOST}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_PORT/${DATABASES_PORT}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_USER/${DATABASES_USER}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_DBNAME/${DATABASES_DBNAME}/g" /etc/pgbouncer/pgbouncer.ini
+          sed -i "s/DATABASES_PASSWORD/${DATABASES_PASSWORD}/g" /etc/pgbouncer/pgbouncer.ini
+
+          # Start PgBouncer (edoburu image uses direct pgbouncer command)
+          exec pgbouncer /etc/pgbouncer/pgbouncer.ini
+        resources:
+          {{- toYaml .Values.pgbouncer.resources | nindent 10 }}
+        readinessProbe:
+          tcpSocket:
+            port: {{ .Values.pgbouncer.port }}
+          initialDelaySeconds: 10
+          periodSeconds: 10
+        livenessProbe:
+          tcpSocket:
+            port: {{ .Values.pgbouncer.port }}
+          initialDelaySeconds: 10
+          periodSeconds: 30
+      volumes:
+      - name: pgbouncer-config-ro
+        configMap:
+          name: {{ include "mirror-db.fullname" . }}-pgbouncer-config
+      - name: pgbouncer-config-rw
+        emptyDir: {}
+      - name: postgres-secrets
+        secret:
+          secretName: {{ include "mirror-db.secretName" . }}
+{{- end }}
+

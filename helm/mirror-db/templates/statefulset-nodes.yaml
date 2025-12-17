@@ -1,0 +1,249 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgres-nodes
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app: postgres-nodes
+    app.kubernetes.io/component: database
+    role: data
+spec:
+  serviceName: postgres-nodes
+  replicas: {{ .Values.postgresql.cluster.replicaCount }}
+  podManagementPolicy: OrderedReady  # MUST be sequential for pg_auto_failover
+  selector:
+    matchLabels:
+      app: postgres-nodes
+  template:
+    metadata:
+      labels:
+        {{- include "mirror-db.labels" . | nindent 8 }}
+        app: postgres-nodes
+        app.kubernetes.io/component: database
+        role: data
+    spec:
+      securityContext:
+        {{- toYaml .Values.security.podSecurityContext | nindent 8 }}
+      terminationGracePeriodSeconds: 60
+      {{- if .Values.postgresql.affinity.enabled }}
+      # Anti-affinity: spread postgres pods across different nodes
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: {{ .Values.postgresql.affinity.hostnameWeight }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: postgres-nodes
+                topologyKey: kubernetes.io/hostname
+            - weight: {{ .Values.postgresql.affinity.zoneWeight }}
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app: postgres-nodes
+                topologyKey: topology.kubernetes.io/zone
+      {{- end }}
+      {{- if .Values.postgresql.topologySpread.enabled }}
+      # Topology spread: ensure even distribution
+      topologySpreadConstraints:
+        - maxSkew: {{ .Values.postgresql.topologySpread.maxSkew }}
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: postgres-nodes
+        - maxSkew: {{ .Values.postgresql.topologySpread.maxSkew }}
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app: postgres-nodes
+      {{- end }}
+      initContainers:
+      - name: initdb
+        image: {{ include "mirror-db.postgresqlImage" . }}
+        imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+        command: ["/bin/bash", "/etc/scripts/init-node.sh"]
+        securityContext:
+          {{- toYaml .Values.security.containerSecurityContext | nindent 10 }}
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/pgdata
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql
+        - name: postgres-secrets
+          mountPath: /etc/secrets
+          readOnly: true
+        - name: pg-auto-failover-config
+          mountPath: /etc/scripts
+          readOnly: true
+        - name: shared-config
+          mountPath: /shared
+      containers:
+      - name: postgres
+        image: {{ include "mirror-db.postgresqlImage" . }}
+        imagePullPolicy: {{ .Values.postgresql.image.pullPolicy }}
+        env:
+        - name: PGDATA
+          value: /var/lib/postgresql/pgdata
+        - name: PG_AUTOCTL_MONITOR
+          value: {{ include "mirror-db.monitorUri" . }}
+        command: ["/bin/bash", "/etc/scripts/start-node.sh"]
+        securityContext:
+          {{- toYaml .Values.security.containerSecurityContext | nindent 10 }}
+        ports:
+        - containerPort: {{ .Values.postgresql.port }}
+          name: postgres
+        volumeMounts:
+        - name: postgres-data
+          mountPath: /var/lib/postgresql
+        - name: postgres-secrets
+          mountPath: /etc/secrets
+          readOnly: true
+        - name: pg-auto-failover-config
+          mountPath: /etc/pg-auto-failover
+          readOnly: true
+        - name: pg-auto-failover-config
+          mountPath: /etc/scripts
+          readOnly: true
+        - name: shared-config
+          mountPath: /shared
+        resources:
+          {{- toYaml .Values.postgresql.resources | nindent 10 }}
+        readinessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - |
+              export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+              # Check if postgres is ready on standard port {{ .Values.postgresql.port }}
+              pg_isready -h localhost -p {{ .Values.postgresql.port }} -U postgres
+          initialDelaySeconds: {{ .Values.postgresql.probes.readiness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.postgresql.probes.readiness.periodSeconds }}
+          timeoutSeconds: {{ .Values.postgresql.probes.readiness.timeoutSeconds }}
+          successThreshold: 1
+          failureThreshold: {{ .Values.postgresql.probes.readiness.failureThreshold }}
+        livenessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - |
+              NODE_NAME=$(hostname)
+              case $NODE_NAME in
+                *-0) PGDATA="/var/lib/postgresql/pgdata/master" ;;
+                *-1) PGDATA="/var/lib/postgresql/pgdata/syncreplica" ;;
+                *-2) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
+                *-3) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
+                *) PGDATA="/var/lib/postgresql/pgdata/replica" ;;
+              esac
+              export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
+
+              # Check if pg_autoctl process is running (most important)
+              if ! pgrep -f "pg_autoctl run" > /dev/null; then
+                echo "pg_autoctl process not running"
+                exit 1
+              fi
+
+              # Check postgres connectivity on standard port {{ .Values.postgresql.port }}
+              if ! pg_isready -h localhost -p {{ .Values.postgresql.port }} -U postgres -t 5; then
+                echo "PostgreSQL not ready"
+                exit 1
+              fi
+          initialDelaySeconds: {{ .Values.postgresql.probes.liveness.initialDelaySeconds }}
+          periodSeconds: {{ .Values.postgresql.probes.liveness.periodSeconds }}
+          timeoutSeconds: {{ .Values.postgresql.probes.liveness.timeoutSeconds }}
+          successThreshold: 1
+          failureThreshold: {{ .Values.postgresql.probes.liveness.failureThreshold }}
+        lifecycle:
+          preStop:
+            exec:
+              command:
+              - /bin/bash
+              - -c
+              - |
+                NODE_NAME=$(hostname)
+                case $NODE_NAME in
+                  *-0) PGDATA="/var/lib/postgresql/pgdata/master" ;;
+                  *-1) PGDATA="/var/lib/postgresql/pgdata/syncreplica" ;;
+                  *-2) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
+                  *-3) PGDATA="/var/lib/postgresql/pgdata/asyncreplica" ;;
+                  *) PGDATA="/var/lib/postgresql/pgdata/replica" ;;
+                esac
+                pg_autoctl stop --pgdata $PGDATA --fast
+                sleep 5
+      {{- if .Values.podLabeler.enabled }}
+      - name: pod-labeler
+        securityContext:
+          runAsUser: 101
+          runAsGroup: 101
+          allowPrivilegeEscalation: false
+          readOnlyRootFilesystem: false
+          capabilities:
+            drop:
+              - ALL
+        # Using pre-built image with dependencies (see images/pod-labeler/Dockerfile)
+        # For now, using python slim with pip install
+        image: {{ include "mirror-db.podLabelerImage" . }}
+        imagePullPolicy: {{ .Values.podLabeler.image.pullPolicy }}
+        command: ["/bin/sh", "-c"]
+        args:
+          - |
+            pip install --user --no-cache-dir psycopg2-binary kubernetes && \
+            echo "Pip install succeeded" && \
+            python -u /mnt/labeler.py
+        resources:
+          {{- toYaml .Values.podLabeler.resources | nindent 10 }}
+        env:
+          - name: NAMESPACE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.namespace
+          - name: HOME
+            value: /tmp/labeler-home
+          - name: PYTHONUSERBASE
+            value: /tmp/labeler-home/.local
+        volumeMounts:
+          - name: labeler-script
+            mountPath: /mnt/labeler.py
+            subPath: labeler.py
+          - name: labeler-home
+            mountPath: /tmp/labeler-home
+      {{- end }}
+
+      volumes:
+      {{- if .Values.podLabeler.enabled }}
+      - name: labeler-script
+        configMap:
+          name: {{ include "mirror-db.fullname" . }}-pod-labeler-script
+      {{- end }}
+      - name: postgres-secrets
+        secret:
+          secretName: {{ include "mirror-db.secretName" . }}
+      - name: pg-auto-failover-config
+        configMap:
+          name: {{ include "mirror-db.fullname" . }}-pg-auto-failover-config
+          defaultMode: 0755
+      - name: shared-config
+        emptyDir: {}
+      {{- if .Values.podLabeler.enabled }}
+      - name: labeler-home
+        emptyDir: {}
+      {{- end }}
+      restartPolicy: Always
+      serviceAccountName: {{ include "mirror-db.serviceAccountName" . }}
+  volumeClaimTemplates:
+  - metadata:
+      name: postgres-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      resources:
+        requests:
+          storage: {{ .Values.postgresql.storage.size }}
+      {{- if .Values.postgresql.storage.storageClass }}
+      storageClassName: {{ .Values.postgresql.storage.storageClass }}
+      {{- end }}
+
