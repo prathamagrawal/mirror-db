@@ -1,0 +1,166 @@
+{{- if .Values.networkPolicy.enabled }}
+# =============================================================================
+# Network Policy: PostgreSQL Nodes
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-postgres-nodes
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres-nodes
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from PgBouncer
+    - from:
+        - podSelector:
+            matchLabels:
+              app: pgbouncer-primary
+        - podSelector:
+            matchLabels:
+              app: pgbouncer-replicas
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.port }}
+    # Allow traffic from monitor
+    - from:
+        - podSelector:
+            matchLabels:
+              app: postgres-monitor
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.port }}
+    # Allow replication traffic between nodes
+    - from:
+        - podSelector:
+            matchLabels:
+              app: postgres-nodes
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.port }}
+    {{- with .Values.networkPolicy.ingressRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  egress:
+    # Allow DNS
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow traffic to monitor
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-monitor
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.monitorPort }}
+    # Allow replication traffic between nodes
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-nodes
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.port }}
+    {{- with .Values.networkPolicy.egressRules }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+
+---
+# =============================================================================
+# Network Policy: Monitor
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-monitor
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app: postgres-monitor
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from PostgreSQL nodes
+    - from:
+        - podSelector:
+            matchLabels:
+              app: postgres-nodes
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.monitorPort }}
+  egress:
+    # Allow DNS
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow traffic to PostgreSQL nodes
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-nodes
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.port }}
+
+{{- if .Values.pgbouncer.enabled }}
+---
+# =============================================================================
+# Network Policy: PgBouncer
+# =============================================================================
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-pgbouncer
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/component: pgbouncer
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic from any pod in the namespace (applications)
+    - from:
+        - podSelector: {}
+      ports:
+        - protocol: TCP
+          port: {{ .Values.pgbouncer.port }}
+  egress:
+    # Allow DNS
+    - to: []
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow traffic to PostgreSQL nodes
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgres-nodes
+      ports:
+        - protocol: TCP
+          port: {{ .Values.postgresql.port }}
+{{- end }}
+{{- end }}
+

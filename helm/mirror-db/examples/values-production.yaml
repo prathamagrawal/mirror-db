@@ -1,0 +1,151 @@
+# =============================================================================
+# Production Environment Values
+# Optimized for production workloads with high availability
+# =============================================================================
+
+global:
+  namespace: "db-production"
+
+namespace:
+  create: true
+  name: "db-production"
+
+postgresql:
+  image:
+    # Use latest for pg_auto_failover (check Docker Hub for available tags)
+    tag: "latest"
+    pullPolicy: IfNotPresent
+
+  cluster:
+    replicaCount: 4  # 1 primary + 1 sync + 2 async replicas
+
+  tuning:
+    maxConnections: 500
+    sharedBuffers: "1GB"
+    effectiveCacheSize: "3GB"
+    walBuffers: "64MB"
+    maxWalSenders: 10
+    maxReplicationSlots: 10
+    walKeepSegments: 128
+
+  resources:
+    requests:
+      memory: "2Gi"
+      cpu: "500m"
+    limits:
+      memory: "4Gi"
+      cpu: "2000m"
+
+  storage:
+    size: "200Gi"
+
+  affinity:
+    enabled: true
+    hostnameWeight: 100
+    zoneWeight: 80  # Spread across zones
+
+monitor:
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+  storage:
+    size: "20Gi"
+
+pgbouncer:
+  enabled: true
+  image:
+    # Use latest for pgbouncer
+    tag: "latest"
+    pullPolicy: IfNotPresent
+  
+  replicas: 2  # HA for connection pooling
+
+  pooling:
+    mode: "transaction"
+    defaultPoolSize: 20
+    maxClientConn: 500
+    reservePoolSize: 5
+    maxDbConnections: 100
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+podLabeler:
+  image:
+    tag: "3.11-slim-bookworm"
+  
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "25m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
+
+ha:
+  podDisruptionBudget:
+    enabled: true
+    postgresNodes:
+      minAvailable: 2
+    monitor:
+      minAvailable: 1
+    pgbouncer:
+      minAvailable: 1
+
+networkPolicy:
+  enabled: true
+
+# Credentials - for production, consider using external secret management
+# To use an existing secret, uncomment existingSecret and create it first:
+#   kubectl create secret generic postgres-production-creds -n db-production \
+#     --from-literal=postgres-user=postgres \
+#     --from-literal=postgres-password=SECURE_PASSWORD \
+#     --from-literal=replicator-user=pgautofailover_replicator \
+#     --from-literal=replicator-password=SECURE_PASSWORD \
+#     --from-literal=monitor-user=autoctl_node \
+#     --from-literal=monitor-password=SECURE_PASSWORD \
+#     --from-literal=app-user=appuser \
+#     --from-literal=app-password=SECURE_PASSWORD
+credentials:
+  postgres:
+    user: "postgres"
+    password: "changeme-in-production"
+  replicator:
+    user: "pgautofailover_replicator"
+    password: "changeme-in-production"
+  monitor:
+    user: "autoctl_node"
+    password: "changeme-in-production"
+  app:
+    user: "appuser"
+    password: "changeme-in-production"
+  # existingSecret: "postgres-production-creds"
+
+# Production node selection
+nodeSelector:
+  node-type: database
+
+tolerations:
+  - key: "database"
+    operator: "Equal"
+    value: "postgres"
+    effect: "NoSchedule"
+
+# Enable metrics for monitoring
+metrics:
+  enabled: true
+  serviceMonitor:
+    enabled: true
+    interval: "15s"
+    labels:
+      release: prometheus

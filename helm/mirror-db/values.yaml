@@ -286,3 +286,59 @@ rbac:
   # -- Whether to create RBAC resources
   create: true
 
+# =============================================================================
+# Node Selection & Scheduling
+# =============================================================================
+nodeSelector: {}
+  # kubernetes.io/os: linux
+  # node-type: database
+
+tolerations: []
+  # - key: "database"
+  #   operator: "Equal"
+  #   value: "postgres"
+  #   effect: "NoSchedule"
+
+# =============================================================================
+# Network Policies
+# =============================================================================
+networkPolicy:
+  # -- Enable network policies for security
+  enabled: false
+  # -- Additional ingress rules
+  ingressRules: []
+  # -- Additional egress rules  
+  egressRules: []
+
+# =============================================================================
+# Metrics & Monitoring
+# =============================================================================
+metrics:
+  # -- Enable Prometheus metrics
+  enabled: false
+  
+  serviceMonitor:
+    # -- Create ServiceMonitor for Prometheus Operator
+    enabled: false
+    # -- ServiceMonitor namespace (defaults to release namespace)
+    namespace: ""
+    # -- Scrape interval
+    interval: "30s"
+    # -- Additional labels for ServiceMonitor
+    labels: {}
+
+# =============================================================================
+# TLS Configuration
+# =============================================================================
+tls:
+  # -- Enable TLS for PostgreSQL connections
+  enabled: false
+  # -- Use cert-manager to generate certificates
+  certManager:
+    enabled: false
+    issuerRef:
+      name: ""
+      kind: "ClusterIssuer"
+  # -- Use existing secret containing TLS certificates
+  existingSecret: ""
+
