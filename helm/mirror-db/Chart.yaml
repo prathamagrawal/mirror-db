@@ -20,12 +20,12 @@ keywords:
   - pgbouncer
   - replication
 
-home: https://github.com/pratham/mirror-db
+home: https://github.com/prathamagrawal/mirror-db
 sources:
-  - https://github.com/pratham/mirror-db
+  - https://github.com/prathamagrawal/mirror-db
 
 maintainers:
-  - name: Pratham
+  - name: Pratham Agrawal
     email: prathamagrawal1205@gmail.com
 
 dependencies: []
