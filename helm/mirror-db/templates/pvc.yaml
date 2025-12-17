@@ -1,0 +1,18 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "mirror-db.fullname" . }}-monitor-pvc
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app.kubernetes.io/component: monitor
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.monitor.storage.size }}
+  {{- if .Values.monitor.storage.storageClass }}
+  storageClassName: {{ .Values.monitor.storage.storageClass }}
+  {{- end }}
+

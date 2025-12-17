@@ -1,34 +1,40 @@
-# Service for dedicated PgBouncer
+# Service for PgBouncer connecting to primary PostgreSQL
 apiVersion: v1
 kind: Service
 metadata:
   name: pgbouncer-primary-service
   namespace: db
   labels:
-    app: pgbouncer-primary-service
+    app: pgbouncer-primary
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/component: pgbouncer
 spec:
   selector:
     app: pgbouncer-primary
   ports:
-  - name: pgbouncer-primary
-    port: 6432
-    targetPort: 6432
+    - name: pgbouncer
+      port: 6432
+      targetPort: 6432
+      protocol: TCP
   type: ClusterIP
 
 ---
-# Service for dedicated PgBouncer
+# Service for PgBouncer connecting to replica PostgreSQL nodes
 apiVersion: v1
 kind: Service
 metadata:
   name: pgbouncer-replicas-service
   namespace: db
   labels:
-    app: pgbouncer-replicas-service
+    app: pgbouncer-replicas
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/component: pgbouncer
 spec:
   selector:
     app: pgbouncer-replicas
   ports:
-  - name: pgbouncer-replicas
-    port: 6432
-    targetPort: 6432
+    - name: pgbouncer
+      port: 6432
+      targetPort: 6432
+      protocol: TCP
   type: ClusterIP

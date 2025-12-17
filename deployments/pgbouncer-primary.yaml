@@ -5,6 +5,8 @@ metadata:
   namespace: db
   labels:
     app: pgbouncer-primary
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/component: pgbouncer
 spec:
   replicas: 1
   selector:
@@ -14,10 +16,22 @@ spec:
     metadata:
       labels:
         app: pgbouncer-primary
+        app.kubernetes.io/name: postgres-cluster
+        app.kubernetes.io/component: pgbouncer
     spec:
+      # Anti-affinity to spread pgbouncer pods
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/component: pgbouncer
+                topologyKey: kubernetes.io/hostname
       initContainers:
       - name: config-init
-        image: busybox:latest
+        image: busybox:1.36  # Pinned version
         command:
         - /bin/sh
         - -c
@@ -33,7 +47,7 @@ spec:
           mountPath: /etc/pgbouncer
       containers:
       - name: pgbouncer
-        image: pgbouncer/pgbouncer:latest
+        image: edoburu/pgbouncer:latest  # Use 'latest' for now
         ports:
         - containerPort: 6432
           name: pgbouncer
@@ -74,8 +88,8 @@ spec:
           sed -i "s/DATABASES_DBNAME/${DATABASES_DBNAME}/g" /etc/pgbouncer/pgbouncer.ini
           sed -i "s/DATABASES_PASSWORD/${DATABASES_PASSWORD}/g" /etc/pgbouncer/pgbouncer.ini
 
-          # Start PgBouncer
-          exec /opt/pgbouncer/entrypoint.sh /etc/pgbouncer/pgbouncer.ini
+          # Start PgBouncer (edoburu image uses direct pgbouncer command)
+          exec pgbouncer /etc/pgbouncer/pgbouncer.ini
         resources:
           requests:
             memory: "64Mi"

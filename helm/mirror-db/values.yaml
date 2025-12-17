@@ -1,0 +1,344 @@
+# =============================================================================
+# PostgreSQL HA Cluster - Helm Values
+# =============================================================================
+
+# -- Global settings
+global:
+  # -- Namespace for all resources (set to "" to use release namespace)
+  namespace: "db"
+  # -- Common labels applied to all resources
+  labels:
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/managed-by: helm
+
+# -- Namespace configuration
+namespace:
+  # -- Whether to create the namespace
+  create: true
+  # -- Name of the namespace
+  name: "db"
+
+# =============================================================================
+# PostgreSQL Configuration
+# =============================================================================
+postgresql:
+  # -- PostgreSQL version
+  version: "15"
+  # -- PostgreSQL port
+  port: 5432
+  # -- Monitor port for pg_auto_failover
+  monitorPort: 6001
+
+  # -- Image configuration
+  image:
+    repository: citusdata/pg_auto_failover
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # -- Cluster sizing
+  cluster:
+    # -- Number of replicas (total nodes: 1 primary + N-1 replicas)
+    replicaCount: 4
+
+  # -- PostgreSQL tuning parameters
+  tuning:
+    maxConnections: 250
+    sharedBuffers: "128MB"
+    effectiveCacheSize: "512MB"
+    walBuffers: "16MB"
+    maxWalSenders: 10
+    maxReplicationSlots: 10
+    walKeepSegments: 64
+
+  # -- Resource configuration for PostgreSQL nodes
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "1000m"
+
+  # -- Probe configuration
+  probes:
+    readiness:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 45
+      timeoutSeconds: 15
+      failureThreshold: 4
+
+  # -- Storage configuration for data nodes
+  storage:
+    size: "50Gi"
+    # -- Storage class (leave empty for default)
+    storageClass: ""
+
+  # -- Pod anti-affinity settings
+  affinity:
+    enabled: true
+    # -- Weight for hostname anti-affinity (0-100)
+    hostnameWeight: 100
+    # -- Weight for zone anti-affinity (0-100)
+    zoneWeight: 50
+
+  # -- Topology spread constraints
+  topologySpread:
+    enabled: true
+    maxSkew: 1
+
+# =============================================================================
+# Monitor Configuration
+# =============================================================================
+monitor:
+  # -- Resource configuration for the monitor
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "100m"
+    limits:
+      memory: "1024Mi"
+      cpu: "500m"
+
+  # -- Storage configuration for monitor
+  storage:
+    size: "10Gi"
+    storageClass: ""
+
+  # -- Probe configuration
+  probes:
+    readiness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 5
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 5
+
+# =============================================================================
+# PgBouncer Configuration
+# =============================================================================
+pgbouncer:
+  # -- Enable PgBouncer deployment
+  enabled: true
+
+  # -- Image configuration
+  image:
+    repository: edoburu/pgbouncer
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  # -- Port for PgBouncer
+  port: 6432
+
+  # -- Number of PgBouncer replicas (for both primary and replica pools)
+  replicas: 1
+
+  # -- Pool settings
+  pooling:
+    # -- Pool mode: session, transaction, or statement
+    mode: "transaction"
+    # -- Default pool size per user/database pair
+    defaultPoolSize: 10
+    # -- Maximum client connections
+    maxClientConn: 100
+    # -- Reserve pool size
+    reservePoolSize: 2
+    # -- Maximum database connections
+    maxDbConnections: 50
+
+  # -- Resource configuration
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "500m"
+
+  # -- Busybox image for init container
+  busybox:
+    image: busybox
+    tag: "1.36"
+
+# =============================================================================
+# Pod Labeler Configuration
+# =============================================================================
+podLabeler:
+  # -- Enable pod labeler sidecar
+  enabled: true
+
+  # -- Image configuration
+  image:
+    repository: python
+    tag: "3.11-slim-bookworm"
+    pullPolicy: IfNotPresent
+
+  # -- Resource configuration
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "25m"
+    limits:
+      memory: "128Mi"
+      cpu: "100m"
+
+# =============================================================================
+# Security Configuration
+# =============================================================================
+security:
+  # -- Pod security context
+  podSecurityContext:
+    fsGroup: 101
+    runAsUser: 101
+    runAsGroup: 101
+
+  # -- Container security context
+  containerSecurityContext:
+    runAsUser: 101
+    runAsGroup: 101
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+
+# =============================================================================
+# Credentials Configuration
+# =============================================================================
+credentials:
+  # -- PostgreSQL superuser credentials
+  postgres:
+    user: "postgres"
+    password: "postgres123"
+
+  # -- Replicator user credentials
+  replicator:
+    user: "pgautofailover_replicator"
+    password: "replicauser123"
+
+  # -- Monitor user credentials
+  monitor:
+    user: "autoctl_node"
+    password: "autoctl_node123"
+
+  # -- Application user credentials
+  app:
+    user: "appuser"
+    password: "appuser123"
+
+  # -- Use existing secret instead of creating one
+  existingSecret: ""
+
+# =============================================================================
+# High Availability Configuration
+# =============================================================================
+ha:
+  # -- Enable Pod Disruption Budgets
+  podDisruptionBudget:
+    enabled: true
+    # -- Minimum available pods for postgres nodes
+    postgresNodes:
+      minAvailable: 2
+    # -- Minimum available pods for monitor
+    monitor:
+      minAvailable: 1
+    # -- Minimum available pods for pgbouncer
+    pgbouncer:
+      minAvailable: 1
+
+# =============================================================================
+# Service Configuration
+# =============================================================================
+services:
+  # -- Monitor service type
+  monitor:
+    type: ClusterIP
+  # -- Primary PostgreSQL service type
+  primary:
+    type: ClusterIP
+  # -- Replica PostgreSQL service type
+  replicas:
+    type: ClusterIP
+  # -- PgBouncer service type
+  pgbouncer:
+    type: ClusterIP
+
+# =============================================================================
+# Service Account
+# =============================================================================
+serviceAccount:
+  # -- Whether to create a service account
+  create: true
+  # -- Name of the service account (auto-generated if not set)
+  name: ""
+  # -- Annotations to add to the service account
+  annotations: {}
+
+# =============================================================================
+# RBAC Configuration
+# =============================================================================
+rbac:
+  # -- Whether to create RBAC resources
+  create: true
+
+# =============================================================================
+# Node Selection & Scheduling
+# =============================================================================
+nodeSelector: {}
+  # kubernetes.io/os: linux
+  # node-type: database
+
+tolerations: []
+  # - key: "database"
+  #   operator: "Equal"
+  #   value: "postgres"
+  #   effect: "NoSchedule"
+
+# =============================================================================
+# Network Policies
+# =============================================================================
+networkPolicy:
+  # -- Enable network policies for security
+  enabled: false
+  # -- Additional ingress rules
+  ingressRules: []
+  # -- Additional egress rules  
+  egressRules: []
+
+# =============================================================================
+# Metrics & Monitoring
+# =============================================================================
+metrics:
+  # -- Enable Prometheus metrics
+  enabled: false
+  
+  serviceMonitor:
+    # -- Create ServiceMonitor for Prometheus Operator
+    enabled: false
+    # -- ServiceMonitor namespace (defaults to release namespace)
+    namespace: ""
+    # -- Scrape interval
+    interval: "30s"
+    # -- Additional labels for ServiceMonitor
+    labels: {}
+
+# =============================================================================
+# TLS Configuration
+# =============================================================================
+tls:
+  # -- Enable TLS for PostgreSQL connections
+  enabled: false
+  # -- Use cert-manager to generate certificates
+  certManager:
+    enabled: false
+    issuerRef:
+      name: ""
+      kind: "ClusterIssuer"
+  # -- Use existing secret containing TLS certificates
+  existingSecret: ""
+

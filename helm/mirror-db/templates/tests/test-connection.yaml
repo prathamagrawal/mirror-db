@@ -1,0 +1,47 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: "{{ include "mirror-db.fullname" . }}-test-connection"
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+  annotations:
+    "helm.sh/hook": test
+    "helm.sh/hook-delete-policy": before-hook-creation,hook-succeeded
+spec:
+  containers:
+    - name: postgres-test
+      image: postgres:15-alpine
+      command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "=== Testing PostgreSQL Cluster Connectivity ==="
+          
+          echo "1. Testing monitor connectivity..."
+          pg_isready -h postgres-monitor -p {{ .Values.postgresql.monitorPort }} -U postgres -t 30
+          echo "✓ Monitor is ready"
+          
+          echo "2. Testing primary service connectivity..."
+          pg_isready -h postgres-primary -p {{ .Values.postgresql.port }} -U postgres -t 30
+          echo "✓ Primary service is ready"
+          
+          echo "3. Testing primary can accept writes..."
+          PGPASSWORD={{ .Values.credentials.postgres.password }} psql -h postgres-primary -p {{ .Values.postgresql.port }} -U postgres -c "SELECT pg_is_in_recovery();" | grep -q "f"
+          echo "✓ Primary accepts writes (not in recovery)"
+          
+          {{- if .Values.pgbouncer.enabled }}
+          echo "4. Testing PgBouncer primary connectivity..."
+          pg_isready -h pgbouncer-primary-service -p {{ .Values.pgbouncer.port }} -U postgres -t 30
+          echo "✓ PgBouncer primary pool is ready"
+          
+          echo "5. Testing PgBouncer replicas connectivity..."
+          pg_isready -h pgbouncer-replicas-service -p {{ .Values.pgbouncer.port }} -U postgres -t 30
+          echo "✓ PgBouncer replicas pool is ready"
+          {{- end }}
+          
+          echo ""
+          echo "=== All tests passed! ==="
+  restartPolicy: Never
+

@@ -1,0 +1,136 @@
+# =============================================================================
+# Service: PostgreSQL Nodes (Headless)
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-nodes
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app: postgres-nodes
+    app.kubernetes.io/component: database
+spec:
+  clusterIP: None  # Headless service for StatefulSet
+  ports:
+    - name: postgres
+      port: {{ .Values.postgresql.port }}
+      targetPort: {{ .Values.postgresql.port }}
+  selector:
+    app: postgres-nodes
+
+---
+# =============================================================================
+# Service: PostgreSQL Primary
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-primary
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  type: {{ .Values.services.primary.type }}
+  selector:
+    app: postgres-nodes
+    pg-role: primary
+  ports:
+    - port: {{ .Values.postgresql.port }}
+      targetPort: {{ .Values.postgresql.port }}
+      protocol: TCP
+
+---
+# =============================================================================
+# Service: PostgreSQL Replicas
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-replicas
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app.kubernetes.io/component: database
+spec:
+  type: {{ .Values.services.replicas.type }}
+  selector:
+    app: postgres-nodes
+    pg-role: replica
+  ports:
+    - port: {{ .Values.postgresql.port }}
+      targetPort: {{ .Values.postgresql.port }}
+      protocol: TCP
+
+---
+# =============================================================================
+# Service: PostgreSQL Monitor
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgres-monitor
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app: postgres-monitor
+    app.kubernetes.io/component: monitor
+spec:
+  type: {{ .Values.services.monitor.type }}
+  selector:
+    app: postgres-monitor
+  ports:
+    - name: monitor
+      port: {{ .Values.postgresql.monitorPort }}
+      targetPort: {{ .Values.postgresql.monitorPort }}
+      protocol: TCP
+
+{{- if .Values.pgbouncer.enabled }}
+---
+# =============================================================================
+# Service: PgBouncer Primary
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer-primary-service
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app: pgbouncer-primary
+    app.kubernetes.io/component: pgbouncer
+spec:
+  type: {{ .Values.services.pgbouncer.type }}
+  selector:
+    app: pgbouncer-primary
+  ports:
+    - name: pgbouncer
+      port: {{ .Values.pgbouncer.port }}
+      targetPort: {{ .Values.pgbouncer.port }}
+      protocol: TCP
+
+---
+# =============================================================================
+# Service: PgBouncer Replicas
+# =============================================================================
+apiVersion: v1
+kind: Service
+metadata:
+  name: pgbouncer-replicas-service
+  namespace: {{ include "mirror-db.namespace" . }}
+  labels:
+    {{- include "mirror-db.labels" . | nindent 4 }}
+    app: pgbouncer-replicas
+    app.kubernetes.io/component: pgbouncer
+spec:
+  type: {{ .Values.services.pgbouncer.type }}
+  selector:
+    app: pgbouncer-replicas
+  ports:
+    - name: pgbouncer
+      port: {{ .Values.pgbouncer.port }}
+      targetPort: {{ .Values.pgbouncer.port }}
+      protocol: TCP
+{{- end }}
+

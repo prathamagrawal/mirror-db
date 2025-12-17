@@ -1,0 +1,74 @@
+# =============================================================================
+# Production Overlay for PostgreSQL HA Cluster
+# =============================================================================
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: db-production
+
+resources:
+  - ../../
+
+# Production-specific labels
+labels:
+  - pairs:
+      environment: production
+    includeSelectors: false
+
+# Production-specific patches
+patches:
+  # Increase resources for production
+  - target:
+      kind: StatefulSet
+      name: postgres-nodes
+    patch: |
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "2Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/cpu
+        value: "500m"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "4Gi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/cpu
+        value: "2000m"
+  
+  # Increase storage for production
+  - target:
+      kind: StatefulSet
+      name: postgres-nodes
+    patch: |
+      - op: replace
+        path: /spec/volumeClaimTemplates/0/spec/resources/requests/storage
+        value: "200Gi"
+      # Uncomment and set appropriate storage class for production
+      # - op: replace
+      #   path: /spec/volumeClaimTemplates/0/spec/storageClassName
+      #   value: "ssd-production"
+
+  # Scale up PgBouncer for production
+  - target:
+      kind: Deployment
+      name: pgbouncer-primary
+    patch: |
+      - op: replace
+        path: /spec/replicas
+        value: 2
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/requests/memory
+        value: "256Mi"
+      - op: replace
+        path: /spec/template/spec/containers/0/resources/limits/memory
+        value: "512Mi"
+
+# Production images (if using private registry)
+images:
+  - name: citusdata/pg_auto_failover
+    newName: your-registry.io/pg_auto_failover
+    newTag: v2.1
+  - name: edoburu/pgbouncer
+    newName: your-registry.io/pgbouncer
+    newTag: "1.22.1"
+

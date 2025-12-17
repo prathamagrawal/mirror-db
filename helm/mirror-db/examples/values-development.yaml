@@ -1,0 +1,73 @@
+# =============================================================================
+# Development Environment Values
+# Optimized for local development (minikube, kind, Docker Desktop)
+# =============================================================================
+
+global:
+  namespace: "db-dev"
+
+namespace:
+  create: true
+  name: "db-dev"
+
+postgresql:
+  cluster:
+    replicaCount: 3  # Minimal: 1 primary + 1 replica + 1 async replica
+
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "100m"
+    limits:
+      memory: "512Mi"
+      cpu: "500m"
+
+  storage:
+    size: "5Gi"
+
+monitor:
+  resources:
+    requests:
+      memory: "256Mi"
+      cpu: "50m"
+    limits:
+      memory: "512Mi"
+      cpu: "250m"
+
+  storage:
+    size: "2Gi"
+
+pgbouncer:
+  enabled: true
+  replicas: 1
+
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "25m"
+    limits:
+      memory: "128Mi"
+      cpu: "250m"
+
+podLabeler:
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "10m"
+    limits:
+      memory: "64Mi"
+      cpu: "50m"
+
+ha:
+  podDisruptionBudget:
+    enabled: false  # Not needed for dev
+
+networkPolicy:
+  enabled: false  # Easier debugging in dev
+
+# Default dev credentials (DO NOT use in production!)
+credentials:
+  postgres:
+    user: "postgres"
+    password: "devpassword"
+
