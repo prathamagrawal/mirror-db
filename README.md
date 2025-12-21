@@ -88,17 +88,68 @@ Mirror-DB provides a production-ready PostgreSQL High Availability setup using *
 - Storage class available (default or custom)
 
 ### Option 1: Helm (Recommended)
+<h1 align="center">Mirror-DB</h1>
+
+<p align="center">
+  <strong>Enterprise-grade PostgreSQL High Availability Cluster for Kubernetes</strong>
+</p>
+
+<p align="center">
+  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-15-336791?style=flat-square&logo=postgresql" alt="PostgreSQL"></a>
+  <a href="https://www.pgbouncer.org/"><img src="https://img.shields.io/badge/PgBouncer-1.22-4169E1?style=flat-square" alt="PgBouncer"></a>
+  <a href="https://kubernetes.io/"><img src="https://img.shields.io/badge/Kubernetes-1.20+-326CE5?style=flat-square&logo=kubernetes" alt="Kubernetes"></a>
+  <a href="https://github.com/citusdata/pg_auto_failover"><img src="https://img.shields.io/badge/pg__auto__failover-2.0-orange?style=flat-square" alt="pg_auto_failover"></a>
+  <a href="https://helm.sh/"><img src="https://img.shields.io/badge/Helm-3.0+-0F1689?style=flat-square&logo=helm" alt="Helm"></a>
+</p>
+
+---
+
+## Quick Start
+
+### Option 1: Helm Installation (OCI Registry – Recommended)
+
+Mirror-DB is published as an **OCI Helm chart** and can be installed directly from GitHub Container Registry.
 
 ```bash
-# Clone repository
-git clone https://github.com/prathamagrawal/mirror-db
-cd mirror-db
+helm install mirror-db oci://ghcr.io/prathamagrawal/mirror-db \
+  --version 0.1.0 \
+  -n db \
+  --create-namespace
 
-# Install with defaults
-helm install mirror-db ./helm/mirror-db -n db --create-namespace
-
-# Watch pods come up
 kubectl get pods -n db -w
+```
+
+#### Production-safe install (recommended)
+
+```bash
+helm install mirror-db oci://ghcr.io/prathamagrawal/mirror-db \
+  --version 0.1.0 \
+  -n db \
+  --create-namespace \
+  --wait \
+  --timeout 10m \
+  --atomic
+```
+
+---
+
+#### Helm Management Commands
+
+```bash
+# Check release
+helm status mirror-db -n db
+
+# Upgrade
+helm upgrade mirror-db oci://ghcr.io/prathamagrawal/mirror-db \
+  --version 0.1.0 \
+  -n db
+
+# Rollback
+helm history mirror-db -n db
+helm rollback mirror-db 1 -n db
+
+# Uninstall
+helm uninstall mirror-db -n db
 ```
 
 ### Option 2: Kustomize
