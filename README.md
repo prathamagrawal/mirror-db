@@ -87,25 +87,6 @@ Mirror-DB provides a production-ready PostgreSQL High Availability setup using *
 - `helm` v3.0+ (for Helm installation)
 - Storage class available (default or custom)
 
-### Option 1: Helm (Recommended)
-<h1 align="center">Mirror-DB</h1>
-
-<p align="center">
-  <strong>Enterprise-grade PostgreSQL High Availability Cluster for Kubernetes</strong>
-</p>
-
-<p align="center">
-  <a href="https://www.postgresql.org/"><img src="https://img.shields.io/badge/PostgreSQL-15-336791?style=flat-square&logo=postgresql" alt="PostgreSQL"></a>
-  <a href="https://www.pgbouncer.org/"><img src="https://img.shields.io/badge/PgBouncer-1.22-4169E1?style=flat-square" alt="PgBouncer"></a>
-  <a href="https://kubernetes.io/"><img src="https://img.shields.io/badge/Kubernetes-1.20+-326CE5?style=flat-square&logo=kubernetes" alt="Kubernetes"></a>
-  <a href="https://github.com/citusdata/pg_auto_failover"><img src="https://img.shields.io/badge/pg__auto__failover-2.0-orange?style=flat-square" alt="pg_auto_failover"></a>
-  <a href="https://helm.sh/"><img src="https://img.shields.io/badge/Helm-3.0+-0F1689?style=flat-square&logo=helm" alt="Helm"></a>
-</p>
-
----
-
-## Quick Start
-
 ### Option 1: Helm Installation (OCI Registry – Recommended)
 
 Mirror-DB is published as an **OCI Helm chart** and can be installed directly from GitHub Container Registry.
@@ -164,49 +145,6 @@ kubectl apply -k .
 
 # Watch pods come up
 kubectl get pods -n db -w
-```
-
----
-
-## Helm Chart
-
-### Installation
-
-```bash
-# Default installation
-helm install mirror-db ./helm/mirror-db -n db --create-namespace
-
-# Development (minimal resources)
-helm install mirror-db ./helm/mirror-db -n db-dev --create-namespace \
-  -f ./helm/mirror-db/examples/values-development.yaml
-
-# Production
-helm install mirror-db ./helm/mirror-db -n db-prod --create-namespace \
-  -f ./helm/mirror-db/examples/values-production.yaml
-
-# Custom values
-helm install mirror-db ./helm/mirror-db -n db --create-namespace \
-  --set postgresql.cluster.replicaCount=6 \
-  --set postgresql.storage.size=100Gi
-```
-
-### Management Commands
-
-```bash
-# Upgrade
-helm upgrade mirror-db ./helm/mirror-db -n db
-
-# Rollback
-helm rollback mirror-db 1 -n db
-
-# Uninstall
-helm uninstall mirror-db -n db
-
-# Test
-helm test mirror-db -n db
-
-# Dry-run
-helm install mirror-db ./helm/mirror-db -n db --dry-run
 ```
 
 ### Configuration Parameters
