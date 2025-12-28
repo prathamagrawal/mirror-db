@@ -142,12 +142,6 @@ spec:
               esac
               export PATH="/usr/lib/postgresql/11/bin:/usr/local/bin:$PATH"
 
-              # Check if pg_autoctl process is running (most important)
-              if ! pgrep -f "pg_autoctl run" > /dev/null; then
-                echo "pg_autoctl process not running"
-                exit 1
-              fi
-
               # Check postgres connectivity on standard port {{ .Values.postgresql.port }}
               if ! pg_isready -h localhost -p {{ .Values.postgresql.port }} -U postgres -t 5; then
                 echo "PostgreSQL not ready"

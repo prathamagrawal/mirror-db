@@ -24,6 +24,7 @@ postgresql:
 
   storage:
     size: "5Gi"
+    storageClass: ""
 
 monitor:
   resources:
@@ -36,6 +37,8 @@ monitor:
 
   storage:
     size: "2Gi"
+    storageClass: ""
+
 
 pgbouncer:
   enabled: true
@@ -50,13 +53,14 @@ pgbouncer:
       cpu: "250m"
 
 podLabeler:
+  enabled: true
   resources:
     requests:
-      memory: "32Mi"
-      cpu: "10m"
+      memory: "64Mi"   # Increased from 32Mi
+      cpu: "25m"
     limits:
-      memory: "64Mi"
-      cpu: "50m"
+      memory: "128Mi"  # Increased from 64Mi
+      cpu: "100m"
 
 ha:
   podDisruptionBudget:
@@ -71,3 +75,9 @@ credentials:
     user: "postgres"
     password: "devpassword"
 
+
+rbac:
+  create: true
+
+serviceAccount:
+  create: true
