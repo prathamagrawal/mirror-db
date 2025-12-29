@@ -75,7 +75,6 @@ credentials:
     user: "postgres"
     password: "devpassword"
 
-
 rbac:
   create: true
 

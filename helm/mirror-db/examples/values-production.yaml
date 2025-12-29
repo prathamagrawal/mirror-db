@@ -1,77 +1,47 @@
 # =============================================================================
-# Production Environment Values
-# Optimized for production workloads with high availability
+# PostgreSQL HA Cluster - Production Values (Minikube Optimized)
 # =============================================================================
 
+# -- Global settings
 global:
   namespace: "db-production"
+  labels:
+    app.kubernetes.io/name: postgres-cluster
+    app.kubernetes.io/managed-by: helm
+    environment: production
 
+# -- Namespace configuration
 namespace:
   create: true
   name: "db-production"
 
+# =============================================================================
+# PostgreSQL Configuration
+# =============================================================================
 postgresql:
+  version: "15"
+  port: 5432
+  monitorPort: 6001
+
   image:
-    # Use latest for pg_auto_failover (check Docker Hub for available tags)
-    tag: "latest"
+    repository: citusdata/pg_auto_failover
+    tag: latest
     pullPolicy: IfNotPresent
 
   cluster:
-    replicaCount: 4  # 1 primary + 1 sync + 2 async replicas
+    # Reduced to 2 nodes for Minikube (1 primary + 1 replica)
+    replicaCount: 2
 
   tuning:
-    maxConnections: 500
-    sharedBuffers: "1GB"
-    effectiveCacheSize: "3GB"
-    walBuffers: "64MB"
-    maxWalSenders: 10
-    maxReplicationSlots: 10
-    walKeepSegments: 128
+    maxConnections: 100
+    sharedBuffers: "64MB"
+    effectiveCacheSize: "256MB"
+    walBuffers: "8MB"
+    maxWalSenders: 5
+    maxReplicationSlots: 5
+    walKeepSegments: 32
 
-  resources:
-    requests:
-      memory: "2Gi"
-      cpu: "500m"
-    limits:
-      memory: "4Gi"
-      cpu: "2000m"
-
-  storage:
-    size: "200Gi"
-
-  affinity:
-    enabled: true
-    hostnameWeight: 100
-    zoneWeight: 80  # Spread across zones
-
-monitor:
-  resources:
-    requests:
-      memory: "512Mi"
-      cpu: "250m"
-    limits:
-      memory: "1Gi"
-      cpu: "500m"
-
-  storage:
-    size: "20Gi"
-
-pgbouncer:
-  enabled: true
-  image:
-    # Use latest for pgbouncer
-    tag: "latest"
-    pullPolicy: IfNotPresent
-  
-  replicas: 2  # HA for connection pooling
-
-  pooling:
-    mode: "transaction"
-    defaultPoolSize: 20
-    maxClientConn: 500
-    reservePoolSize: 5
-    maxDbConnections: 100
-
+  # -- Minimal resources for local testing
   resources:
     requests:
       memory: "256Mi"
@@ -80,72 +50,223 @@ pgbouncer:
       memory: "512Mi"
       cpu: "500m"
 
-podLabeler:
-  image:
-    tag: "3.11-slim-bookworm"
-  
+  probes:
+    readiness:
+      initialDelaySeconds: 30
+      periodSeconds: 30
+      timeoutSeconds: 10
+      failureThreshold: 3
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 45
+      timeoutSeconds: 15
+      failureThreshold: 4
+
+  storage:
+    size: "5Gi"  # Reduced for Minikube
+    storageClass: ""  # Use default storage class
+
+  # -- Disabled for single-node Minikube
+  affinity:
+    enabled: false
+    hostnameWeight: 100
+    zoneWeight: 50
+
+  topologySpread:
+    enabled: false  # Not useful with single node
+
+# =============================================================================
+# Monitor Configuration
+# =============================================================================
+monitor:
   resources:
     requests:
-      memory: "64Mi"
+      memory: "128Mi"
+      cpu: "50m"
+    limits:
+      memory: "256Mi"
+      cpu: "200m"
+
+  storage:
+    size: "2Gi"  # Reduced for Minikube
+    storageClass: ""
+
+  probes:
+    readiness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 5
+    liveness:
+      initialDelaySeconds: 30
+      periodSeconds: 15
+      timeoutSeconds: 10
+      failureThreshold: 5
+
+# =============================================================================
+# PgBouncer Configuration
+# =============================================================================
+pgbouncer:
+  enabled: true
+
+  image:
+    repository: edoburu/pgbouncer
+    tag: latest
+    pullPolicy: IfNotPresent
+
+  port: 6432
+  replicas: 1  # Single replica for Minikube
+
+  pooling:
+    mode: "transaction"
+    defaultPoolSize: 5  # Reduced for testing
+    maxClientConn: 50
+    reservePoolSize: 1
+    maxDbConnections: 25
+
+  resources:
+    requests:
+      memory: "32Mi"
       cpu: "25m"
     limits:
       memory: "128Mi"
-      cpu: "100m"
+      cpu: "250m"
 
+  busybox:
+    image: busybox
+    tag: "1.36"
+
+# =============================================================================
+# Pod Labeler Configuration
+# =============================================================================
+podLabeler:
+  enabled: true
+
+  image:
+    repository: python
+    tag: "3.11-slim-bookworm"
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      memory: "32Mi"
+      cpu: "10m"
+    limits:
+      memory: "64Mi"
+      cpu: "50m"
+
+# =============================================================================
+# Security Configuration
+# =============================================================================
+security:
+  podSecurityContext:
+    fsGroup: 101
+    runAsUser: 101
+    runAsGroup: 101
+
+  containerSecurityContext:
+    runAsUser: 101
+    runAsGroup: 101
+    allowPrivilegeEscalation: false
+    readOnlyRootFilesystem: false
+
+# =============================================================================
+# Credentials Configuration
+# =============================================================================
+credentials:
+  postgres:
+    user: "postgres"
+    password: "prod_postgres_secure_2024"
+
+  replicator:
+    user: "pgautofailover_replicator"
+    password: "prod_replicator_secure_2024"
+
+  monitor:
+    user: "autoctl_node"
+    password: "prod_monitor_secure_2024"
+
+  app:
+    user: "appuser"
+    password: "prod_app_secure_2024"
+
+  existingSecret: ""
+
+# =============================================================================
+# High Availability Configuration
+# =============================================================================
 ha:
   podDisruptionBudget:
     enabled: true
     postgresNodes:
-      minAvailable: 2
+      minAvailable: 1  # At least 1 of 2 nodes
     monitor:
       minAvailable: 1
     pgbouncer:
       minAvailable: 1
 
-networkPolicy:
-  enabled: true
-
-# Credentials - for production, consider using external secret management
-# To use an existing secret, uncomment existingSecret and create it first:
-#   kubectl create secret generic postgres-production-creds -n db-production \
-#     --from-literal=postgres-user=postgres \
-#     --from-literal=postgres-password=SECURE_PASSWORD \
-#     --from-literal=replicator-user=pgautofailover_replicator \
-#     --from-literal=replicator-password=SECURE_PASSWORD \
-#     --from-literal=monitor-user=autoctl_node \
-#     --from-literal=monitor-password=SECURE_PASSWORD \
-#     --from-literal=app-user=appuser \
-#     --from-literal=app-password=SECURE_PASSWORD
-credentials:
-  postgres:
-    user: "postgres"
-    password: "changeme-in-production"
-  replicator:
-    user: "pgautofailover_replicator"
-    password: "changeme-in-production"
+# =============================================================================
+# Service Configuration
+# =============================================================================
+services:
   monitor:
-    user: "autoctl_node"
-    password: "changeme-in-production"
-  app:
-    user: "appuser"
-    password: "changeme-in-production"
-  # existingSecret: "postgres-production-creds"
+    type: ClusterIP
+  primary:
+    type: ClusterIP
+  replicas:
+    type: ClusterIP
+  pgbouncer:
+    type: ClusterIP
 
-# Production node selection
-nodeSelector:
-  node-type: database
+# =============================================================================
+# Service Account
+# =============================================================================
+serviceAccount:
+  create: true
+  name: ""
+  annotations: {}
 
-tolerations:
-  - key: "database"
-    operator: "Equal"
-    value: "postgres"
-    effect: "NoSchedule"
+# =============================================================================
+# RBAC Configuration
+# =============================================================================
+rbac:
+  create: true
 
-# Enable metrics for monitoring
+# =============================================================================
+# Node Selection & Scheduling
+# =============================================================================
+nodeSelector: {}
+
+tolerations: []
+
+# =============================================================================
+# Network Policies
+# =============================================================================
+networkPolicy:
+  enabled: false
+  ingressRules: []
+  egressRules: []
+
+# =============================================================================
+# Metrics & Monitoring
+# =============================================================================
 metrics:
-  enabled: true
+  enabled: false
+  
   serviceMonitor:
-    enabled: true
-    interval: "15s"
-    labels:
-      release: prometheus
+    enabled: false
+    namespace: ""
+    interval: "30s"
+    labels: {}
+
+# =============================================================================
+# TLS Configuration
+# =============================================================================
+tls:
+  enabled: false
+  certManager:
+    enabled: false
+    issuerRef:
+      name: ""
+      kind: "ClusterIssuer"
+  existingSecret: ""
