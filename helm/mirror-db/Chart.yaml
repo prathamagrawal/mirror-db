@@ -7,8 +7,8 @@ name: mirror-db
 description: A Helm chart for deploying a highly available PostgreSQL cluster with pg_auto_failover and PgBouncer
 
 type: application
-version: 0.1.0
-appVersion: "15"
+version: 1.1.0
+appVersion: "1.1.0"
 
 keywords:
   - postgresql
