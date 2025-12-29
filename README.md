@@ -93,26 +93,12 @@ Mirror-DB is published as an **OCI Helm chart** and can be installed directly fr
 
 ```bash
 helm install mirror-db oci://ghcr.io/prathamagrawal/mirror-db \
-  --version 0.1.0 \
+  --version 1.1.0 \
   -n db \
   --create-namespace
 
 kubectl get pods -n db -w
 ```
-
-#### Production-safe install (recommended)
-
-```bash
-helm install mirror-db oci://ghcr.io/prathamagrawal/mirror-db \
-  --version 0.1.0 \
-  -n db \
-  --create-namespace \
-  --wait \
-  --timeout 10m \
-  --atomic
-```
-
----
 
 #### Helm Management Commands
 
@@ -122,7 +108,7 @@ helm status mirror-db -n db
 
 # Upgrade
 helm upgrade mirror-db oci://ghcr.io/prathamagrawal/mirror-db \
-  --version 0.1.0 \
+  --version 1.1.0 \
   -n db
 
 # Rollback
@@ -132,6 +118,37 @@ helm rollback mirror-db 1 -n db
 # Uninstall
 helm uninstall mirror-db -n db
 ```
+
+#### Different Examples of Configurations 
+
+1. Development mode
+
+```bash
+git clone https://github.com/prathamagrawal/mirror-db
+cd mirror-db/helm/mirror-db/
+
+helm install mirror-db oci://ghcr.io/prathamagrawal/mirror-db \
+  --version 1.1.0 \
+  -n db-dev \
+  --create-namespace \
+  --values \
+  ./examples/values-development.yaml
+```
+
+2. Production Mode (with node affinity and pod distribution)
+
+```bash
+git clone https://github.com/prathamagrawal/mirror-db
+cd mirror-db/helm/mirror-db/
+
+helm install mirror-db oci://ghcr.io/prathamagrawal/mirror-db \
+  --version 1.1.0 \
+  -n db-production \
+  --create-namespace \
+  --values \
+  ./examples/values-production.yaml
+```
+
 
 ### Option 2: Kustomize
 
